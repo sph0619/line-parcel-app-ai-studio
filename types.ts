@@ -4,6 +4,7 @@ export interface PackageItem {
   packageId: string;
   barcode: string;
   householdId: string;
+  recipientName?: string; // New field
   status: PackageStatus;
   receivedTime: string; // ISO String
   pickupTime?: string; // ISO String
