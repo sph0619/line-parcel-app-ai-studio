@@ -83,8 +83,15 @@ export const PickupModal: React.FC<Props> = ({ pkg, onClose, onSuccess }) => {
             <div className="space-y-6">
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center">
                 <p className="text-blue-600 text-sm font-bold uppercase tracking-wide">領取戶號</p>
-                <p className="text-4xl font-bold text-slate-800 mt-2">{pkg.householdId}</p>
-                <p className="text-slate-500 text-sm mt-1">條碼: {pkg.barcode}</p>
+                <div className="flex flex-col items-center justify-center">
+                    <p className="text-4xl font-bold text-slate-800 mt-2">{pkg.householdId}</p>
+                    {pkg.recipientName && (
+                        <span className="text-sm font-medium text-slate-600 bg-white/50 px-3 py-1 rounded-full mt-2">
+                            {pkg.recipientName}
+                        </span>
+                    )}
+                </div>
+                <p className="text-slate-500 text-sm mt-2">條碼: {pkg.barcode}</p>
               </div>
               
               <div className="text-center space-y-2">
@@ -93,7 +100,7 @@ export const PickupModal: React.FC<Props> = ({ pkg, onClose, onSuccess }) => {
                 </div>
                 <h4 className="font-semibold text-slate-800">安全驗證</h4>
                 <p className="text-sm text-slate-500">
-                  為確保安全性，系統將發送一組一次性密碼 (OTP) 至住戶綁定的 Line 帳號。
+                  為確保安全性，系統將發送一組一次性密碼 (OTP) 至{pkg.recipientName ? `住戶 ${pkg.recipientName}` : '住戶'}綁定的 Line 帳號。
                 </p>
               </div>
 
