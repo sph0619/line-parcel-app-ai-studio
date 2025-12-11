@@ -239,10 +239,10 @@ app.post('/api/packages', async (req, res) => {
       'FALSE'
     ];
 
-    // FIX: 明確指定 Range 為 A:I，強制從第一欄開始寫入
+    // FIX: 明確指定 Range 為 A:A，強制以 A 欄為基準尋找最後一列，避免偏移
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:I', 
+      range: 'Packages!A:A', 
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [newPackage] },
