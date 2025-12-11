@@ -65,8 +65,9 @@ async function getAuthClient() {
   }
 }
 
-// --- Helper: Find Line User IDs by Household ---
-async function getLineUsersByHousehold(householdId) {
+// --- Helper: Find Line User IDs ---
+// Updated to support filtering by Name
+async function getLineUsersByHousehold(householdId, recipientName = null) {
   try {
     const auth = await getAuthClient();
     if (!auth) return [];
@@ -74,14 +75,19 @@ async function getLineUsersByHousehold(householdId) {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Users!A:B', 
+      range: 'Users!A:C', // A:LineID, B:Household, C:Name
     });
 
     const rows = response.data.values;
     if (!rows || rows.length === 0) return [];
 
     const targetUsers = rows
-      .filter(row => row[1] === householdId)
+      .filter(row => {
+        const matchHousehold = row[1] === householdId;
+        // 如果有指定收件人，必須姓名相符；如果沒指定，則發送給該戶所有人
+        const matchName = recipientName ? row[2] === recipientName : true;
+        return matchHousehold && matchName;
+      })
       .map(row => row[0]);
 
     return [...new Set(targetUsers)];
@@ -114,15 +120,17 @@ async function handleLineEvent(event) {
   const userId = event.source.userId;
 
   if (userMessage.startsWith('綁定') || userMessage.toLowerCase().startsWith('reg')) {
-    const parts = userMessage.split(' ');
-    if (parts.length < 2) {
+    const parts = userMessage.split(/\s+/); // Split by any whitespace
+    // Requirement 2: Format: 綁定 [戶號] [姓名]
+    if (parts.length < 3) {
       return lineClient.replyMessage(event.replyToken, {
         type: 'text',
-        text: '指令格式錯誤。請輸入：「綁定 您的戶號」，例如：「綁定 11A1」'
+        text: '指令格式更新！\n請輸入：「綁定 您的戶號 您的姓名」\n例如：「綁定 11A1 王小明」'
       });
     }
 
     const householdId = parts[1].toUpperCase();
+    const userName = parts[2];
 
     if (!validateHouseholdId(householdId)) {
       return lineClient.replyMessage(event.replyToken, {
@@ -131,56 +139,107 @@ async function handleLineEvent(event) {
       });
     }
 
-    await registerLineUser(userId, householdId);
+    const result = await registerLineUser(userId, householdId, userName);
+    
+    if (!result.success) {
+         return lineClient.replyMessage(event.replyToken, {
+            type: 'text',
+            text: result.message
+          });
+    }
 
     return lineClient.replyMessage(event.replyToken, {
       type: 'text',
-      text: `綁定成功！\n戶號：${householdId}\n\n當有包裹送達時，您將會收到 Line 通知。`
+      text: `綁定成功！\n戶號：${householdId}\n姓名：${userName}\n\n當有您的包裹送達時，將會收到通知。`
     });
   }
 
   return lineClient.replyMessage(event.replyToken, {
     type: 'text',
-    text: '您好！我是社區包裹小幫手。\n請輸入「綁定 戶號」來接收到貨通知。\n例如：綁定 11A1'
+    text: '您好！我是社區包裹小幫手。\n請輸入「綁定 戶號 姓名」來接收到貨通知。\n例如：綁定 11A1 王小明'
   });
 }
 
-async function registerLineUser(lineUserId, householdId) {
+async function registerLineUser(lineUserId, householdId, name) {
   try {
     const auth = await getAuthClient();
-    if (!auth) return;
+    if (!auth) return { success: false, message: "System Error" };
     const sheets = google.sheets({ version: 'v4', auth });
     
+    // Check for duplicates (Household + Name)
+    const existing = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: 'Users!A:C',
+    });
+
+    const rows = existing.data.values || [];
+    // Row structure: [LineID, Household, Name, Date]
+    const isDuplicate = rows.some(row => row[1] === householdId && row[2] === name);
+    
+    if (isDuplicate) {
+        return { success: false, message: `綁定失敗：住戶「${name}」已在戶號「${householdId}」綁定過。` };
+    }
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Users!A:C',
+      range: 'Users!A:D',
       valueInputOption: 'USER_ENTERED',
       requestBody: { 
-        values: [[lineUserId, householdId, new Date().toISOString()]] 
+        values: [[lineUserId, householdId, name, new Date().toISOString()]] 
       },
     });
+    return { success: true };
   } catch (error) {
     console.error("Register User Error:", error);
+    return { success: false, message: "系統連線錯誤，請稍後再試。" };
   }
 }
 
-async function notifyUser(householdId, barcode) {
+async function notifyUser(householdId, barcode, recipientName = null) {
   if (!lineClient) return;
 
-  const uniqueUsers = await getLineUsersByHousehold(householdId);
+  // Pass recipientName to filter specific user
+  const uniqueUsers = await getLineUsersByHousehold(householdId, recipientName);
 
   if (uniqueUsers.length > 0) {
     const message = {
       type: 'text',
-      text: `📦 包裹到貨通知！\n\n戶號：${householdId}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快至管理室領取。`
+      text: `📦 包裹到貨通知！\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快至管理室領取。`
     };
 
     await Promise.all(uniqueUsers.map(uid => lineClient.pushMessage(uid, message)));
-    console.log(`已發送 Line 通知給 ${uniqueUsers.length} 位用戶`);
+    console.log(`已發送 Line 通知給 ${uniqueUsers.length} 位用戶 (${recipientName || 'Household'})`);
   }
 }
 
 // --- API Routes ---
+
+// Requirement 3: Get Residents by Household
+app.get('/api/households/:id/residents', async (req, res) => {
+    const householdId = req.params.id.toUpperCase();
+    try {
+        const auth = await getAuthClient();
+        if (!auth) throw new Error("No Credentials");
+        const sheets = google.sheets({ version: 'v4', auth });
+        
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Users!B:C', // B:Household, C:Name
+        });
+        
+        const rows = response.data.values || [];
+        // Filter rows matching householdId and return unique names
+        const residents = rows
+            .filter(row => row[0] === householdId && row[1]) // Check household match and name existence
+            .map(row => row[1]); // Map to Name
+            
+        const uniqueResidents = [...new Set(residents)];
+        res.json(uniqueResidents);
+    } catch (error) {
+        console.error("Get Residents Error:", error.message);
+        res.status(500).json([]);
+    }
+});
 
 app.get('/api/packages', async (req, res) => {
   try {
@@ -188,9 +247,10 @@ app.get('/api/packages', async (req, res) => {
     if (!auth) throw new Error("No Credentials");
 
     const sheets = google.sheets({ version: 'v4', auth });
+    // Expand range to J to include RecipientName
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:I',
+      range: 'Packages!A:J', 
     });
 
     const rows = response.data.values;
@@ -203,9 +263,10 @@ app.get('/api/packages', async (req, res) => {
       status: row[3],
       receivedTime: row[4],
       pickupTime: row[5],
-      pickupOTP: row[6] ? row[6].split(':')[0] : '', // Hide expiry from frontend
+      pickupOTP: row[6] ? row[6].split(':')[0] : '',
       signatureDataURL: row[7],
-      isOverdueNotified: row[8] === 'TRUE'
+      isOverdueNotified: row[8] === 'TRUE',
+      recipientName: row[9] || '' // Column J
     })).reverse();
 
     res.json(packages);
@@ -216,7 +277,7 @@ app.get('/api/packages', async (req, res) => {
 });
 
 app.post('/api/packages', async (req, res) => {
-  const { householdId, barcode } = req.body;
+  const { householdId, barcode, recipientName } = req.body; // Added recipientName
 
   if (!validateHouseholdId(householdId)) {
     return res.status(400).json({ error: "戶號格式錯誤。請確認：樓層3-19、棟別A/B/C、門牌1-4。" });
@@ -227,19 +288,38 @@ app.post('/api/packages', async (req, res) => {
     if (!auth) throw new Error("No Credentials");
 
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // Requirement 1: Check for duplicate barcode in ACTIVE (Pending) packages
+    // We fetch current barcodes to check
+    const existingData = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: 'Packages!B:D', // B:Barcode, D:Status
+    });
+    
+    const existingRows = existingData.data.values || [];
+    // Check if barcode exists AND status is NOT 'Picked Up' (implies it's still in system)
+    // Actually, usually Barcodes (like tracking numbers) are unique per delivery. 
+    // To be safe, we reject if ANY row has this barcode, or maybe just Pending ones.
+    // Let's implement Strict Check: Cannot add if same barcode exists and is 'Pending'.
+    const isDuplicate = existingRows.some(row => row[0] === barcode && row[2] === 'Pending');
+    
+    if (isDuplicate) {
+        return res.status(400).json({ error: "此條碼已存在且尚未被領取，無法重複登錄。" });
+    }
+
     const newPackage = [
       `PKG${Date.now()}`,
       barcode,
       householdId,
       'Pending',
       new Date().toISOString(),
-      '',
-      '',
-      '',
-      'FALSE'
+      '', // PickupTime
+      '', // OTP
+      '', // Signature
+      'FALSE', // Overdue
+      recipientName || '' // Column J: Recipient Name
     ];
 
-    // FIX: 明確指定 Range 為 A:A，強制以 A 欄為基準尋找最後一列，避免偏移
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: 'Packages!A:A', 
@@ -248,7 +328,7 @@ app.post('/api/packages', async (req, res) => {
       requestBody: { values: [newPackage] },
     });
 
-    notifyUser(householdId, barcode).catch(err => console.error("Async Notify Error:", err));
+    notifyUser(householdId, barcode, recipientName).catch(err => console.error("Async Notify Error:", err));
 
     res.json({ success: true, packageId: newPackage[0] });
   } catch (error) {
@@ -270,7 +350,7 @@ app.post('/api/packages/:id/otp', async (req, res) => {
     // 1. Find the package row
     const list = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:C', // Get ID, Barcode, Household
+      range: 'Packages!A:J', // Get ID...Recipient
     });
 
     const rows = list.data.values;
@@ -278,6 +358,7 @@ app.post('/api/packages/:id/otp', async (req, res) => {
     if (rowIndex === -1) return res.status(404).json({ error: "Package not found" });
 
     const householdId = rows[rowIndex][2];
+    const recipientName = rows[rowIndex][9]; // Column J
     const sheetRow = rowIndex + 1;
 
     // 2. Generate OTP and Expiry
@@ -295,16 +376,18 @@ app.post('/api/packages/:id/otp', async (req, res) => {
 
     // 4. Send Line Notification
     if (lineClient) {
-      const users = await getLineUsersByHousehold(householdId);
+      // Use the specific recipient Logic here too
+      const users = await getLineUsersByHousehold(householdId, recipientName);
+      
       if (users.length > 0) {
         const message = {
           type: 'text',
-          text: `🔐 領取驗證碼通知\n\n戶號：${householdId}\n包裹ID：${packageId}\n\n您的驗證碼為：【${otp}】\n\n有效期限為 5 分鐘，請出示給櫃台人員。`
+          text: `🔐 領取驗證碼通知\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}\n包裹ID：${packageId}\n\n您的驗證碼為：【${otp}】\n\n有效期限為 5 分鐘，請出示給櫃台人員。`
         };
         await Promise.all(users.map(uid => lineClient.pushMessage(uid, message)));
         console.log(`OTP Sent to ${users.length} users`);
       } else {
-        console.log("No Line user found for this household");
+        console.log("No Line user found for this household/recipient");
       }
     }
 
