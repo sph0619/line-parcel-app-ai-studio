@@ -12,12 +12,13 @@ const mockService = {
     return data ? JSON.parse(data) : [];
   },
 
-  addPackage: async (householdId: string, barcode: string): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string): Promise<PackageItem> => {
     await new Promise(resolve => setTimeout(resolve, 600)); // Simulate network delay
     const newPkg: PackageItem = {
       packageId: `PKG${Date.now()}`,
       barcode,
       householdId,
+      recipientName,
       status: 'Pending',
       receivedTime: new Date().toISOString(),
       isOverdueNotified: false,
@@ -35,7 +36,6 @@ const mockService = {
 
   verifyAndPickup: async (packageId: string, inputOTP: string, signature: string): Promise<boolean> => {
     await new Promise(resolve => setTimeout(resolve, 800));
-    // Mock always accepts '123456' or any length 6 in some tests, but for now we accept anything in mock
     const current = mockService.getPackages();
     const updated = current.map(p => 
       p.packageId === packageId ? { 
@@ -50,6 +50,13 @@ const mockService = {
     return true;
   },
   
+  getResidents: async (householdId: string): Promise<string[]> => {
+      // Mock data for dropdown
+      if (householdId === '11A1') return ['王小明', '陳大文'];
+      if (householdId === '12B2') return ['林小美'];
+      return [];
+  },
+
   seed: () => {
     if (localStorage.getItem(STORAGE_KEY)) return;
     const initialData: PackageItem[] = [
@@ -57,6 +64,7 @@ const mockService = {
         packageId: 'PKG_SEED_1',
         barcode: 'SF123456789',
         householdId: '11A1',
+        recipientName: '王小明',
         status: 'Pending',
         receivedTime: new Date(Date.now() - 3600000).toISOString(), 
         isOverdueNotified: false
@@ -65,6 +73,7 @@ const mockService = {
         packageId: 'PKG_SEED_2',
         barcode: 'DHL987654321',
         householdId: '12B2',
+        recipientName: '林小美',
         status: 'Picked Up',
         receivedTime: new Date(Date.now() - 86400000).toISOString(), 
         pickupTime: new Date(Date.now() - 82800000).toISOString(),
@@ -93,18 +102,22 @@ export const packageService = {
     }
   },
 
-  addPackage: async (householdId: string, barcode: string): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string): Promise<PackageItem> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ householdId, barcode }),
+        body: JSON.stringify({ householdId, barcode, recipientName }),
       });
-      if (!response.ok) throw new Error('API Error');
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'API Error');
+      }
       return await response.json();
-    } catch (e) {
-       console.warn("後端連線失敗，使用模擬資料。", e);
-       return mockService.addPackage(householdId, barcode);
+    } catch (e: any) {
+       console.warn("後端連線失敗或錯誤。", e);
+       // Throw to let component handle it (e.g. duplicate barcode)
+       throw e; 
     }
   },
 
@@ -114,7 +127,6 @@ export const packageService = {
       if (!response.ok) throw new Error('API Error');
       return "SENT"; 
     } catch (e) {
-      console.warn("後端連線失敗，使用模擬資料。", e);
       return mockService.generateOTP(packageId);
     }
   },
@@ -129,9 +141,19 @@ export const packageService = {
       if (!response.ok) throw new Error('Verification failed');
       return true;
     } catch (e) {
-      console.warn("後端連線失敗，使用模擬資料。", e);
       return mockService.verifyAndPickup(packageId, inputOTP, signature);
     }
+  },
+  
+  getResidents: async (householdId: string): Promise<string[]> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/households/${householdId}/residents`);
+          if (!response.ok) throw new Error('API Error');
+          return await response.json();
+      } catch (e) {
+          console.warn("Fetch residents failed, using mock", e);
+          return mockService.getResidents(householdId);
+      }
   },
 
   seedData: () => mockService.seed()
