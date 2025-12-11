@@ -1,0 +1,5 @@
+{
+  "name": "Community Package Manager V2",
+  "description": "A comprehensive admin panel for community package management featuring OTP verification, digital signatures, and automated notifications.",
+  "requestFramePermissions": []
+}
