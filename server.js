@@ -18,9 +18,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // A, C 棟: 1-3
 // B 棟: 1-4
 // Regex 說明:
-// ^([3-9]|1[0-9]) : 3-9 或 10-19
+// ^([3-9]|1[0-9]) : 3-9 或 10-19 (不補0)
 // ([AC][1-3]|B[1-4])$ : (A或C接1-3) 或 (B接1-4)
 function validateHouseholdId(id) {
+  if (!id) return false;
   const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1-4])$/;
   return regex.test(id);
 }
@@ -108,7 +109,7 @@ async function handleLineEvent(event) {
     if (!validateHouseholdId(householdId)) {
       return lineClient.replyMessage(event.replyToken, {
         type: 'text',
-        text: `戶號格式錯誤！\n\n規則：\n1. 樓層 3-19\n2. 棟別 A, B, C\n3. A/C棟門牌 1-3；B棟門牌 1-4\n\n範例：11A1, 3B4`
+        text: `戶號格式錯誤！\n\n規則：\n1. 樓層 3-19 (不需補0)\n2. 棟別 A, B, C (大寫)\n3. A/C棟門牌 1-3；B棟門牌 1-4\n\n範例：11A1, 3B4`
       });
     }
 
@@ -159,3 +160,166 @@ async function notifyUser(householdId, barcode) {
     });
 
     const rows = response.data.values;
+    if (!rows || rows.length === 0) return;
+
+    const targetUsers = rows
+      .filter(row => row[1] === householdId)
+      .map(row => row[0]);
+
+    const uniqueUsers = [...new Set(targetUsers)];
+
+    if (uniqueUsers.length > 0) {
+      const message = {
+        type: 'text',
+        text: `📦 包裹到貨通知！\n\n戶號：${householdId}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快至管理室領取。`
+      };
+
+      await Promise.all(uniqueUsers.map(uid => lineClient.pushMessage(uid, message)));
+      console.log(`已發送 Line 通知給 ${uniqueUsers.length} 位用戶`);
+    }
+
+  } catch (error) {
+    console.error("Notify User Error:", error);
+  }
+}
+
+// --- API Routes ---
+
+app.get('/api/packages', async (req, res) => {
+  try {
+    const auth = await getAuthClient();
+    if (!auth) throw new Error("No Credentials");
+
+    const sheets = google.sheets({ version: 'v4', auth });
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Packages!A:I',
+    });
+
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return res.json([]);
+
+    const packages = rows.slice(1).map(row => ({
+      packageId: row[0],
+      barcode: row[1],
+      householdId: row[2],
+      status: row[3],
+      receivedTime: row[4],
+      pickupTime: row[5],
+      pickupOTP: row[6],
+      signatureDataURL: row[7],
+      isOverdueNotified: row[8] === 'TRUE'
+    })).reverse();
+
+    res.json(packages);
+  } catch (error) {
+    console.error("API Error (Get Packages):", error.message);
+    res.status(500).json({ error: "Fetch failed", details: error.message });
+  }
+});
+
+// 新增包裹
+app.post('/api/packages', async (req, res) => {
+  const { householdId, barcode } = req.body;
+
+  // 後端驗證戶號
+  if (!validateHouseholdId(householdId)) {
+    return res.status(400).json({ error: "戶號格式錯誤。請確認：樓層3-19、棟別A/B/C、門牌1-4。" });
+  }
+
+  try {
+    const auth = await getAuthClient();
+    if (!auth) throw new Error("No Credentials");
+
+    const sheets = google.sheets({ version: 'v4', auth });
+    const newPackage = [
+      `PKG${Date.now()}`,
+      barcode,
+      householdId,
+      'Pending',
+      new Date().toISOString(),
+      '',
+      '',
+      '',
+      'FALSE'
+    ];
+
+    // 修改 range 為 'Packages'，讓 Google 自動判斷插入位置
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Packages', 
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: { values: [newPackage] },
+    });
+
+    notifyUser(householdId, barcode).catch(err => console.error("Async Notify Error:", err));
+
+    res.json({ success: true, packageId: newPackage[0] });
+  } catch (error) {
+    console.error("API Error (Add Package):", error.message);
+    res.status(500).json({ error: "Add failed" });
+  }
+});
+
+app.post('/api/packages/:id/otp', async (req, res) => {
+  console.log(`Generating OTP for package ${req.params.id}`);
+  res.json({ success: true });
+});
+
+app.post('/api/packages/:id/pickup', async (req, res) => {
+  const { signatureDataURL } = req.body;
+  const packageId = req.params.id;
+
+  try {
+    const auth = await getAuthClient();
+    if (!auth) throw new Error("No Credentials");
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const list = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: 'Packages!A:A',
+    });
+    
+    const rowIndex = list.data.values.findIndex(r => r[0] === packageId);
+    if (rowIndex === -1) throw new Error("Package not found");
+    
+    const sheetRow = rowIndex + 1;
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: [
+          { range: `Packages!D${sheetRow}`, values: [['Picked Up']] },
+          { range: `Packages!F${sheetRow}`, values: [[new Date().toISOString()]] },
+          { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] },
+          { range: `Packages!G${sheetRow}`, values: [['']] }
+        ]
+      }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("API Error (Pickup):", error.message);
+    res.status(500).json({ error: "Pickup failed" });
+  }
+});
+
+// --- Serve Frontend ---
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  console.log("No dist folder found. Running in API-only mode or build failed.");
+  app.get('/', (req, res) => {
+    res.send('Server is running, but frontend build not found.');
+  });
+}
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
