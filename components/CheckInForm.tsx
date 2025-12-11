@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle } from 'lucide-react';
+import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -10,6 +10,10 @@ interface Props {
 
 export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [householdId, setHouseholdId] = useState('');
+  const [recipientName, setRecipientName] = useState('');
+  const [residentList, setResidentList] = useState<string[]>([]);
+  const [fetchingResidents, setFetchingResidents] = useState(false);
+  
   const [barcode, setBarcode] = useState('');
   const [loading, setLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -20,6 +24,31 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1-4])$/;
     return regex.test(id);
   };
+
+  // 當戶號變更且格式正確時，抓取住戶名單
+  useEffect(() => {
+      const fetchResidents = async () => {
+          if (validateHouseholdId(householdId)) {
+              setFetchingResidents(true);
+              setRecipientName(''); // Reset selection
+              setResidentList([]);
+              try {
+                  const names = await packageService.getResidents(householdId);
+                  setResidentList(names);
+              } catch (e) {
+                  console.error("Failed to fetch residents", e);
+              } finally {
+                  setFetchingResidents(false);
+              }
+          } else {
+              setResidentList([]);
+          }
+      };
+
+      // Simple debounce
+      const timeoutId = setTimeout(fetchResidents, 500);
+      return () => clearTimeout(timeoutId);
+  }, [householdId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,12 +63,14 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
 
     setLoading(true);
     try {
-      await packageService.addPackage(householdId, barcode);
-      triggerToast(`包裹 ${barcode} 已登記至 ${householdId} 戶`, 'success');
-      setBarcode(''); // 保留戶號以便批量輸入，僅清除條碼
+      // 傳遞收件人姓名 (若未選則為空字串，後端會視為全體)
+      await packageService.addPackage(householdId, barcode, recipientName);
+      triggerToast(`包裹 ${barcode} 已登記至 ${householdId} 戶 ${recipientName ? `(${recipientName})` : ''}`, 'success');
+      setBarcode(''); // 保留戶號和收件人以便批量輸入? 通常保留戶號但不保留收件人比較安全，避免下一個包裹給錯人
+      setRecipientName(''); // Reset recipient
       onPackageAdded();
-    } catch (error) {
-      triggerToast('登記失敗，請檢查網路或後端連線', 'error');
+    } catch (error: any) {
+      triggerToast(error.message || '登記失敗，請檢查網路或後端連線', 'error');
     } finally {
       setLoading(false);
     }
@@ -157,6 +188,31 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
             )}
           </div>
 
+          {/* Recipient Dropdown */}
+          <div className="space-y-2 transition-opacity duration-300">
+             <label className="block text-sm font-semibold text-slate-700 flex justify-between">
+                <span>指定收件人 (選填)</span>
+                {fetchingResidents && <span className="text-xs text-blue-500 flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> 搜尋住戶中...</span>}
+             </label>
+             <div className="relative">
+                <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                <select
+                    value={recipientName}
+                    onChange={(e) => setRecipientName(e.target.value)}
+                    disabled={!householdId || !!errorMsg || residentList.length === 0}
+                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white disabled:bg-slate-50 disabled:text-slate-400"
+                >
+                    <option value="">-- 通知該戶全體住戶 --</option>
+                    {residentList.map((name, idx) => (
+                        <option key={idx} value={name}>{name}</option>
+                    ))}
+                </select>
+                {residentList.length === 0 && householdId && !errorMsg && !fetchingResidents && (
+                    <p className="text-xs text-amber-500 mt-1 ml-1">注意：該戶號尚未有綁定住戶，將無法發送 Line 通知。</p>
+                )}
+             </div>
+          </div>
+
           <div className="space-y-2">
             <label className="block text-sm font-semibold text-slate-700">包裹條碼 / 追蹤號</label>
             <div className="flex gap-2">
@@ -230,7 +286,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
         <h4 className="font-semibold text-blue-800 text-sm mb-2">系統自動化動作:</h4>
         <ul className="text-sm text-blue-600 space-y-1 list-disc list-inside">
           <li>驗證戶號是否已註冊 Line 帳號</li>
-          <li>立即發送 Line 到貨通知給住戶</li>
+          <li>立即發送 Line 到貨通知給住戶 (指定收件人)</li>
           <li>記錄入庫時間以利追蹤逾期包裹</li>
         </ul>
       </div>
