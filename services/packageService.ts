@@ -35,6 +35,7 @@ const mockService = {
 
   verifyAndPickup: async (packageId: string, inputOTP: string, signature: string): Promise<boolean> => {
     await new Promise(resolve => setTimeout(resolve, 800));
+    // Mock always accepts '123456' or any length 6 in some tests, but for now we accept anything in mock
     const current = mockService.getPackages();
     const updated = current.map(p => 
       p.packageId === packageId ? { 
