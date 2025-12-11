@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 interface Props {
   onPackageAdded: () => void;
@@ -52,13 +52,31 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     if (isScanning) {
       const startScanning = async () => {
         try {
-            html5QrCode = new Html5Qrcode("reader");
+            // 明確指定支援的格式，針對包裹條碼優化
+            const formatsToSupport = [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.CODE_128, // 常見物流條碼
+                Html5QrcodeSupportedFormats.CODE_39,  // 常見物流條碼
+                Html5QrcodeSupportedFormats.EAN_13,   // 商品條碼
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E
+            ];
+
+            html5QrCode = new Html5Qrcode("reader", {
+                formatsToSupport: formatsToSupport,
+                verbose: false,
+                experimentalFeatures: {
+                    useBarCodeDetectorIfSupported: true
+                }
+            });
+
             await html5QrCode.start(
                 { facingMode: "environment" },
                 { 
-                  fps: 10, 
-                  qrbox: { width: 250, height: 250 },
-                  aspectRatio: 1.0 
+                  fps: 25, // 提高 FPS 增加靈敏度
+                  // 設定為長方形掃描框，更適合長條形的一維條碼
+                  qrbox: { width: 300, height: 150 }, 
+                  aspectRatio: 1.0
                 },
                 (decodedText) => {
                     // Success callback
@@ -195,10 +213,13 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                         </button>
                     </div>
                     
-                    <div id="reader" className="w-full bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-slate-700"></div>
+                    <div className="relative">
+                        <div id="reader" className="w-full bg-black rounded-lg overflow-hidden shadow-2xl border-2 border-slate-700"></div>
+                        <div className="absolute inset-0 border-2 border-red-500/50 pointer-events-none rounded-lg" style={{ top: '50%', height: '2px', backgroundColor: 'rgba(255, 0, 0, 0.2)' }}></div>
+                    </div>
                     
                     <p className="text-slate-400 text-center text-xs mt-4">
-                        請將鏡頭對準條碼，系統將自動識別
+                        請將紅線對準條碼中央
                     </p>
                 </div>
             </div>
