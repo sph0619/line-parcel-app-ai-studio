@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { PackageItem } from '../types';
-import { Search, Clock, Package as PkgIcon, AlertTriangle, Filter } from 'lucide-react';
+import { Search, Clock, Package as PkgIcon, AlertTriangle, Filter, User } from 'lucide-react';
 import { PickupModal } from './PickupModal';
 
 interface Props {
@@ -30,7 +30,8 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
   const filteredPackages = useMemo(() => {
     return packages.filter(p => 
       p.householdId.includes(searchTerm.toUpperCase()) || 
-      p.barcode.toLowerCase().includes(searchTerm.toLowerCase())
+      p.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.recipientName && p.recipientName.includes(searchTerm))
     );
   }, [packages, searchTerm]);
 
@@ -42,7 +43,7 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
           <input
             type="text"
-            placeholder="搜尋戶號或條碼..."
+            placeholder="搜尋戶號、姓名或條碼..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
@@ -69,7 +70,7 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="px-6 py-4 font-semibold text-slate-700">狀態</th>
-                  <th className="px-6 py-4 font-semibold text-slate-700">戶號</th>
+                  <th className="px-6 py-4 font-semibold text-slate-700">住戶資訊</th>
                   <th className="px-6 py-4 font-semibold text-slate-700">條碼</th>
                   <th className="px-6 py-4 font-semibold text-slate-700">到達時間</th>
                   <th className="px-6 py-4 font-semibold text-slate-700">操作</th>
@@ -100,7 +101,15 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
                         )}
                       </td>
                       <td className="px-6 py-4">
-                        <span className="font-bold text-slate-800 text-base">{pkg.householdId}</span>
+                        <div className="flex flex-col">
+                            <span className="font-bold text-slate-800 text-base">{pkg.householdId}</span>
+                            {pkg.recipientName && (
+                                <span className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                                    <User size={10} />
+                                    {pkg.recipientName}
+                                </span>
+                            )}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-slate-600 font-mono">
                         {pkg.barcode}
