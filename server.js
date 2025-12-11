@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -14,12 +15,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(express.json());
 app.use(cors());
 
-// --- Google Sheets Configuration ---
-// 在 Render 環境變數中設定:
-// GOOGLE_SHEET_ID: 您的試算表 ID
-// GOOGLE_SERVICE_ACCOUNT_EMAIL: 服務帳號 Email
-// GOOGLE_PRIVATE_KEY: 服務帳號私鑰 (注意換行符號)
+// Health Check (讓 Render 確認伺服器活著)
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
+// --- Google Sheets Configuration ---
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
 async function getAuthClient() {
@@ -30,14 +31,19 @@ async function getAuthClient() {
     return null;
   }
 
-  const jwt = new google.auth.JWT(
-    GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    null,
-    GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
-    SCOPES
-  );
-  await jwt.authorize();
-  return jwt;
+  try {
+    const jwt = new google.auth.JWT(
+      GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      null,
+      GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      SCOPES
+    );
+    await jwt.authorize();
+    return jwt;
+  } catch (error) {
+    console.error("Google Auth Error:", error.message);
+    return null;
+  }
 }
 
 // --- API Routes ---
@@ -51,14 +57,12 @@ app.get('/api/packages', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:I', // 假設資料在 Packages 分頁
+      range: 'Packages!A:I',
     });
 
     const rows = response.data.values;
     if (!rows || rows.length === 0) return res.json([]);
 
-    // 假設第一行是標題，從第二行開始解析
-    // 對應 Schemas: packageId, barcode, householdId, status, receivedTime, pickupTime, pickupOTP, signatureDataURL, isOverdueNotified
     const packages = rows.slice(1).map(row => ({
       packageId: row[0],
       barcode: row[1],
@@ -69,11 +73,11 @@ app.get('/api/packages', async (req, res) => {
       pickupOTP: row[6],
       signatureDataURL: row[7],
       isOverdueNotified: row[8] === 'TRUE'
-    })).reverse(); // 最新的在前面
+    })).reverse();
 
     res.json(packages);
   } catch (error) {
-    console.error("API Error:", error.message);
+    console.error("API Error (Get Packages):", error.message);
     res.status(500).json({ error: "Fetch failed", details: error.message });
   }
 });
@@ -87,15 +91,15 @@ app.post('/api/packages', async (req, res) => {
 
     const sheets = google.sheets({ version: 'v4', auth });
     const newPackage = [
-      `PKG${Date.now()}`, // packageId
+      `PKG${Date.now()}`,
       barcode,
       householdId,
-      'Pending', // status
-      new Date().toISOString(), // receivedTime
-      '', // pickupTime
-      '', // pickupOTP
-      '', // signatureDataURL
-      'FALSE' // isOverdueNotified
+      'Pending',
+      new Date().toISOString(),
+      '',
+      '',
+      '',
+      'FALSE'
     ];
 
     await sheets.spreadsheets.values.append({
@@ -105,18 +109,15 @@ app.post('/api/packages', async (req, res) => {
       requestBody: { values: [newPackage] },
     });
 
-    // TODO: 這裡呼叫 Line Messaging API 發送通知
-
     res.json({ success: true, packageId: newPackage[0] });
   } catch (error) {
+    console.error("API Error (Add Package):", error.message);
     res.status(500).json({ error: "Add failed" });
   }
 });
 
-// 3. 生成 OTP (Line 通知)
+// 3. 生成 OTP
 app.post('/api/packages/:id/otp', async (req, res) => {
-  // 實務上這裡會生成隨機碼，更新 Google Sheet，並呼叫 Line API
-  // 簡化版：僅回傳成功
   console.log(`Generating OTP for package ${req.params.id}`);
   res.json({ success: true });
 });
@@ -131,7 +132,6 @@ app.post('/api/packages/:id/pickup', async (req, res) => {
     if (!auth) throw new Error("No Credentials");
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 1. 搜尋該 Package ID 在第幾行
     const list = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       range: 'Packages!A:A',
@@ -140,10 +140,8 @@ app.post('/api/packages/:id/pickup', async (req, res) => {
     const rowIndex = list.data.values.findIndex(r => r[0] === packageId);
     if (rowIndex === -1) throw new Error("Package not found");
     
-    const sheetRow = rowIndex + 1; // 轉為 Sheet 的行號 (1-based)
+    const sheetRow = rowIndex + 1;
 
-    // 2. 更新狀態、時間與簽名 (欄位 D, F, H)
-    // 注意：這裡假設欄位順序固定
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: process.env.GOOGLE_SHEET_ID,
       requestBody: {
@@ -152,26 +150,31 @@ app.post('/api/packages/:id/pickup', async (req, res) => {
           { range: `Packages!D${sheetRow}`, values: [['Picked Up']] },
           { range: `Packages!F${sheetRow}`, values: [[new Date().toISOString()]] },
           { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] },
-          { range: `Packages!G${sheetRow}`, values: [['']] } // 清除 OTP
+          { range: `Packages!G${sheetRow}`, values: [['']] }
         ]
       }
     });
 
     res.json({ success: true });
   } catch (error) {
-    console.error(error);
+    console.error("API Error (Pickup):", error.message);
     res.status(500).json({ error: "Pickup failed" });
   }
 });
 
-
 // --- Serve Frontend ---
-// 在生產環境中，Express 負責提供 Vite 建立的靜態檔案
-app.use(express.static(path.join(__dirname, 'dist')));
-
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  console.log("No dist folder found. Running in API-only mode or build failed.");
+  app.get('/', (req, res) => {
+    res.send('Server is running, but frontend build not found.');
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
