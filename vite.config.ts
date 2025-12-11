@@ -6,6 +6,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 1000, // 增加警告上限，避免 build log 出現嚇人的警告
   },
   server: {
     proxy: {
