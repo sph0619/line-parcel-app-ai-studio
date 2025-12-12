@@ -1,11 +1,10 @@
-import { PackageItem } from '../types';
+import { PackageItem, PickupSession } from '../types';
 
 // Points to the backend server endpoint
 const API_BASE_URL = '/api'; 
 const STORAGE_KEY = 'community_packages_v2_fallback';
 
 // --- MOCK IMPLEMENTATION (Fallback) ---
-// 當 API 無法連線時，使用此模擬邏輯確保介面可用
 const mockService = {
   getPackages: (): PackageItem[] => {
     const data = localStorage.getItem(STORAGE_KEY);
@@ -13,7 +12,7 @@ const mockService = {
   },
 
   addPackage: async (householdId: string, barcode: string, recipientName?: string): Promise<PackageItem> => {
-    await new Promise(resolve => setTimeout(resolve, 600)); // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 600)); 
     const newPkg: PackageItem = {
       packageId: `PKG${Date.now()}`,
       barcode,
@@ -28,33 +27,58 @@ const mockService = {
     return newPkg;
   },
 
-  generateOTP: async (packageId: string): Promise<string> => {
-     await new Promise(resolve => setTimeout(resolve, 500));
-     console.log(`[Mock] OTP generated for ${packageId}`);
-     return "SENT_MOCK";
-  },
-
-  verifyAndPickup: async (packageId: string, inputOTP: string, signature: string): Promise<boolean> => {
-    await new Promise(resolve => setTimeout(resolve, 800));
-    const current = mockService.getPackages();
-    const updated = current.map(p => 
-      p.packageId === packageId ? { 
-        ...p, 
-        status: 'Picked Up' as const, 
-        pickupTime: new Date().toISOString(),
-        pickupOTP: undefined,
-        signatureDataURL: signature
-      } : p
-    );
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    return true;
-  },
-  
   getResidents: async (householdId: string): Promise<string[]> => {
-      // Mock data for dropdown
       if (householdId === '11A1') return ['王小明', '陳大文'];
       if (householdId === '12B2') return ['林小美'];
       return [];
+  },
+  
+  // Mock new methods
+  verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      if (otp === '888888') {
+          return {
+              user: { name: '王小明', householdId: '11A1' },
+              packages: mockService.getPackages().filter(p => p.householdId === '11A1' && p.status === 'Pending')
+          };
+      }
+      throw new Error('Invalid OTP');
+  },
+
+  confirmBatchPickup: async (packageIds: string[], signature: string): Promise<void> => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const current = mockService.getPackages();
+      const updated = current.map(p => 
+          packageIds.includes(p.packageId) ? {
+              ...p,
+              status: 'Picked Up' as const,
+              pickupTime: new Date().toISOString(),
+              signatureDataURL: signature
+          } : p
+      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  },
+
+  generateOTP: async (packageId: string): Promise<void> => {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      console.log(`[Mock] OTP sent for package ${packageId}`);
+  },
+
+  verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      // Mock accepts '888888'
+      if (otp !== '888888') throw new Error('Invalid Mock OTP (try 888888)');
+      
+      const current = mockService.getPackages();
+      const updated = current.map(p => 
+          p.packageId === packageId ? {
+              ...p,
+              status: 'Picked Up' as const,
+              pickupTime: new Date().toISOString(),
+              signatureDataURL: signature
+          } : p
+      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   },
 
   seed: () => {
@@ -85,11 +109,9 @@ const mockService = {
   }
 };
 
-// Initialize mock data
 mockService.seed();
 
 // --- HYBRID SERVICE ---
-// 優先嘗試 API，失敗則使用 Mock
 export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
@@ -116,43 +138,82 @@ export const packageService = {
       return await response.json();
     } catch (e: any) {
        console.warn("後端連線失敗或錯誤。", e);
-       // Throw to let component handle it (e.g. duplicate barcode)
        throw e; 
     }
   },
 
-  generateOTP: async (packageId: string): Promise<string> => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/packages/${packageId}/otp`, { method: 'POST' });
-      if (!response.ok) throw new Error('API Error');
-      return "SENT"; 
-    } catch (e) {
-      return mockService.generateOTP(packageId);
-    }
-  },
-
-  verifyAndPickup: async (packageId: string, inputOTP: string, signature: string): Promise<boolean> => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/packages/${packageId}/pickup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ otp: inputOTP, signatureDataURL: signature }),
-      });
-      if (!response.ok) throw new Error('Verification failed');
-      return true;
-    } catch (e) {
-      return mockService.verifyAndPickup(packageId, inputOTP, signature);
-    }
-  },
-  
   getResidents: async (householdId: string): Promise<string[]> => {
       try {
           const response = await fetch(`${API_BASE_URL}/households/${householdId}/residents`);
           if (!response.ok) throw new Error('API Error');
           return await response.json();
       } catch (e) {
-          console.warn("Fetch residents failed, using mock", e);
           return mockService.getResidents(householdId);
+      }
+  },
+
+  // New Methods for Batch Pickup (User Initiated)
+  verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/pickup/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ otp }),
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || '驗證失敗');
+        }
+        return await response.json();
+    } catch (e) {
+        // Only fallback if status is 500 or network error, NOT 400 (logic error)
+        if (e instanceof Error && e.message === '驗證失敗') throw e; 
+        console.warn("OTP Check failed, trying mock", e);
+        return mockService.verifyPickupOTP(otp);
+    }
+  },
+
+  confirmBatchPickup: async (packageIds: string[], signature: string): Promise<void> => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/pickup/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packageIds, signatureDataURL: signature }),
+        });
+        if (!response.ok) throw new Error('提交失敗');
+      } catch (e) {
+         return mockService.confirmBatchPickup(packageIds, signature);
+      }
+  },
+
+  // Methods for Individual Pickup (Admin Initiated)
+  generateOTP: async (packageId: string): Promise<void> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/packages/${packageId}/otp`, {
+             method: 'POST'
+          });
+          if (!response.ok) throw new Error('發送失敗');
+      } catch (e) {
+          console.warn("API fail, using mock", e);
+          return mockService.generateOTP(packageId);
+      }
+  },
+
+  verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/packages/${packageId}/pickup`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ otp, signatureDataURL: signature }),
+          });
+          if (!response.ok) {
+               const err = await response.json();
+               throw new Error(err.error || '領取失敗');
+          }
+      } catch (e) {
+          console.warn("API fail, using mock", e);
+          if (e instanceof Error && (e.message.includes('領取失敗') || e.message.includes('無效'))) throw e;
+          return mockService.verifyAndPickup(packageId, otp, signature);
       }
   },
 
