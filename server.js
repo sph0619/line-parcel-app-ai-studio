@@ -65,6 +65,13 @@ async function getAuthClient() {
   }
 }
 
+// Helper: Get Sheet ID (GID) by Title
+async function getSheetId(sheets, spreadsheetId, title) {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheet = meta.data.sheets.find(s => s.properties.title === title);
+    return sheet ? sheet.properties.sheetId : null;
+}
+
 // --- Helper: Find Line User IDs ---
 async function getLineUsersByHousehold(householdId, recipientName = null) {
   try {
@@ -287,7 +294,79 @@ async function notifyUser(householdId, barcode, recipientName = null) {
 
 // --- API Routes ---
 
-// 1. Get Residents
+// 1. Get Residents (Line Users)
+app.get('/api/users', async (req, res) => {
+    try {
+        const auth = await getAuthClient();
+        if (!auth) throw new Error("No Credentials");
+        const sheets = google.sheets({ version: 'v4', auth });
+        
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Users!A:D', // A:ID, B:Household, C:Name, D:Date
+        });
+        
+        const rows = response.data.values || [];
+        const users = rows.map(row => ({
+            lineId: row[0],
+            householdId: row[1],
+            name: row[2],
+            joinDate: row[3],
+            status: 'APPROVED'
+        }));
+        res.json(users);
+    } catch (error) {
+        console.error("Get Users Error:", error.message);
+        res.status(500).json([]);
+    }
+});
+
+// Delete User
+app.delete('/api/users/:lineId', async (req, res) => {
+    const { lineId } = req.params;
+    try {
+        const auth = await getAuthClient();
+        if (!auth) throw new Error("No Credentials");
+        const sheets = google.sheets({ version: 'v4', auth });
+
+        // 1. Find Row Index
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Users!A:A',
+        });
+        const rows = response.data.values || [];
+        const rowIndex = rows.findIndex(r => r[0] === lineId);
+
+        if (rowIndex === -1) return res.status(404).json({ error: "User not found" });
+
+        // 2. Get Sheet ID
+        const sheetId = await getSheetId(sheets, process.env.GOOGLE_SHEET_ID, 'Users');
+        if (sheetId === null) throw new Error("Sheet 'Users' not found");
+
+        // 3. Delete Row
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            requestBody: {
+                requests: [{
+                    deleteDimension: {
+                        range: {
+                            sheetId: sheetId,
+                            dimension: 'ROWS',
+                            startIndex: rowIndex,
+                            endIndex: rowIndex + 1
+                        }
+                    }
+                }]
+            }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Delete User Error:", error.message);
+        res.status(500).json({ error: "Delete failed" });
+    }
+});
+
 app.get('/api/households/:id/residents', async (req, res) => {
     const householdId = req.params.id.toUpperCase();
     try {
@@ -400,6 +479,52 @@ app.post('/api/packages', async (req, res) => {
     console.error("API Error (Add Package):", error.message);
     res.status(500).json({ error: "Add failed" });
   }
+});
+
+// Delete Package
+app.delete('/api/packages/:packageId', async (req, res) => {
+    const { packageId } = req.params;
+    try {
+        const auth = await getAuthClient();
+        if (!auth) throw new Error("No Credentials");
+        const sheets = google.sheets({ version: 'v4', auth });
+
+        // 1. Find Row Index
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Packages!A:A', // ID column
+        });
+        const rows = response.data.values || [];
+        const rowIndex = rows.findIndex(r => r[0] === packageId);
+
+        if (rowIndex === -1) return res.status(404).json({ error: "Package not found" });
+
+        // 2. Get Sheet ID
+        const sheetId = await getSheetId(sheets, process.env.GOOGLE_SHEET_ID, 'Packages');
+        if (sheetId === null) throw new Error("Sheet 'Packages' not found");
+
+        // 3. Delete Row
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            requestBody: {
+                requests: [{
+                    deleteDimension: {
+                        range: {
+                            sheetId: sheetId,
+                            dimension: 'ROWS',
+                            startIndex: rowIndex,
+                            endIndex: rowIndex + 1
+                        }
+                    }
+                }]
+            }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Delete Package Error:", error.message);
+        res.status(500).json({ error: "Delete failed" });
+    }
 });
 
 // --- NEW OTP PICKUP FLOW API ---
