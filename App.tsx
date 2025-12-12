@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Package, CheckSquare, LayoutDashboard, History, Bell } from 'lucide-react';
+import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings } from 'lucide-react';
 import { CheckInForm } from './components/CheckInForm';
 import { StatsDashboard } from './components/StatsDashboard';
 import { HistoryLog } from './components/HistoryLog';
 import { PickupFlow } from './components/PickupFlow';
+import { ManagementPanel } from './components/ManagementPanel';
 import { Toaster } from './components/Toaster';
 import { PackageItem, TabType } from './types';
 import { packageService } from './services/packageService';
@@ -37,10 +38,11 @@ export default function App() {
       case 'checkin':
         return <CheckInForm onPackageAdded={refreshData} />;
       case 'pickup':
-        // New Workflow: OTP-based pickup
         return <PickupFlow onSuccess={refreshData} />;
       case 'history':
         return <HistoryLog packages={packages} />;
+      case 'management':
+        return <ManagementPanel packages={packages} onUpdate={refreshData} />;
       default:
         return <StatsDashboard packages={packages} />;
     }
@@ -52,6 +54,7 @@ export default function App() {
       case 'checkin': return '包裹入庫';
       case 'pickup': return '領取作業';
       case 'history': return '歷史紀錄';
+      case 'management': return '資料管理';
       default: return '系統總覽';
     }
   };
@@ -97,6 +100,12 @@ export default function App() {
             onClick={() => setActiveTab('history')} 
             icon={<History size={20} />} 
             label="歷史紀錄" 
+          />
+          <NavButton 
+            active={activeTab === 'management'} 
+            onClick={() => setActiveTab('management')} 
+            icon={<Settings size={20} />} 
+            label="資料管理" 
           />
         </nav>
 
