@@ -4,7 +4,7 @@ export interface PackageItem {
   packageId: string;
   barcode: string;
   householdId: string;
-  recipientName?: string; // New field
+  recipientName?: string;
   status: PackageStatus;
   receivedTime: string; // ISO String
   pickupTime?: string; // ISO String
@@ -19,6 +19,14 @@ export interface User {
   name: string;
   status: 'APPROVED' | 'PENDING';
   joinDate: string;
+}
+
+export interface PickupSession {
+  user: {
+    name: string;
+    householdId: string;
+  };
+  packages: PackageItem[];
 }
 
 export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history';
