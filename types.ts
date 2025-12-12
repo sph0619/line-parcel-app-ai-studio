@@ -29,7 +29,7 @@ export interface PickupSession {
   packages: PackageItem[];
 }
 
-export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history';
+export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management';
 
 // For Stats
 export interface DailyStat {
