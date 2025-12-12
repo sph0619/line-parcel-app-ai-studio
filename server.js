@@ -102,6 +102,25 @@ async function getLineUsersByHousehold(householdId, recipientName = null) {
   }
 }
 
+// --- Helper: Generate Unique OTP ---
+function generateUniqueOTP(existingOtps) {
+    let otp;
+    let isUnique = false;
+    let attempts = 0;
+    
+    while (!isUnique && attempts < 10) {
+        otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // Check if this OTP exists in the list of active OTPs
+        // extract code part from "CODE:EXPIRY" format
+        const collision = existingOtps.some(entry => entry && entry.startsWith(otp + ':'));
+        if (!collision) {
+            isUnique = true;
+        }
+        attempts++;
+    }
+    return otp;
+}
+
 // --- Line Bot Webhook & Logic ---
 app.post('/callback', async (req, res) => {
   if (!lineClient) return res.status(500).end();
@@ -160,14 +179,86 @@ async function handleLineEvent(event) {
   }
 
   // 2. Handle Pickup Request: 領取
-  if (userMessage === '領取' || userMessage.toLowerCase() === 'pickup') {
+  if (['領取', 'pickup', '取件'].includes(userMessage.toLowerCase())) {
       return handleUserPickupRequest(event, userId);
+  }
+
+  // 3. Handle Check Request: 查詢包裹
+  if (['查詢', '查詢包裹', 'check', 'query'].includes(userMessage.toLowerCase())) {
+      return handleUserQueryPackages(event, userId);
   }
 
   return lineClient.replyMessage(event.replyToken, {
     type: 'text',
-    text: '您好！我是社區包裹小幫手。\n\n指令列表：\n1. 「綁定 戶號 姓名」: 註冊帳號\n2. 「領取」: 產生取件驗證碼'
+    text: '您好！我是社區包裹小幫手。\n\n指令列表：\n1. 「綁定 戶號 姓名」\n2. 「查詢包裹」: 查看待領清單\n3. 「領取」: 產生取件驗證碼'
   });
+}
+
+// 處理用戶 "查詢包裹" 指令
+async function handleUserQueryPackages(event, userId) {
+    try {
+        const auth = await getAuthClient();
+        if (!auth) return;
+        const sheets = google.sheets({ version: 'v4', auth });
+
+        // Get User Info
+        const userResp = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Users!A:C',
+        });
+        const userRows = userResp.data.values || [];
+        const user = userRows.find(r => r[0] === userId);
+
+        if (!user) {
+            return lineClient.replyMessage(event.replyToken, {
+                type: 'text',
+                text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」'
+            });
+        }
+        
+        const householdId = user[1];
+
+        // Get Packages
+        const pkgResp = await sheets.spreadsheets.values.get({
+            spreadsheetId: process.env.GOOGLE_SHEET_ID,
+            range: 'Packages!A:J', // Need RecipientName(J), Barcode(B), Status(D), Date(E)
+        });
+        const pkgRows = pkgResp.data.values || [];
+        
+        // Filter: Match Household AND Status is Pending
+        const pendingPkgs = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending');
+
+        if (pendingPkgs.length === 0) {
+            return lineClient.replyMessage(event.replyToken, {
+                type: 'text',
+                text: `查詢結果：${householdId}\n\n目前沒有待領取的包裹。`
+            });
+        }
+
+        // Build List
+        let replyText = `查詢結果：${householdId}\n待領包裹共 ${pendingPkgs.length} 件：\n`;
+        
+        pendingPkgs.forEach((pkg, index) => {
+            const barcode = pkg[1];
+            const date = new Date(pkg[4]);
+            const dateStr = `${(date.getMonth()+1)}/${date.getDate()}`;
+            const recipient = pkg[9] ? `(${pkg[9]})` : '';
+            const shortCode = barcode.length > 5 ? `...${barcode.slice(-5)}` : barcode;
+            
+            replyText += `\n${index + 1}. [${dateStr}] ${shortCode} ${recipient}`;
+        });
+
+        replyText += `\n\n輸入「領取」可獲取驗證碼。`;
+
+        return lineClient.replyMessage(event.replyToken, {
+            type: 'text',
+            text: replyText
+        });
+
+    } catch (e) {
+        console.error("Query Package Error", e);
+        return lineClient.replyMessage(event.replyToken, { type: 'text', text: '系統忙碌中' });
+    }
 }
 
 // 處理用戶 "領取" 指令
@@ -177,7 +268,7 @@ async function handleUserPickupRequest(event, userId) {
         if (!auth) return;
         const sheets = google.sheets({ version: 'v4', auth });
 
-        // 1. Get User Info
+        // 1. Get User Info & All Existing OTPs (Column E) for collision check
         const userResp = await sheets.spreadsheets.values.get({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: 'Users!A:E', // A:Id, B:Household, C:Name, D:Date, E:OTP(Pending)
@@ -195,6 +286,9 @@ async function handleUserPickupRequest(event, userId) {
 
         const householdId = userRows[userRowIndex][1];
         const userName = userRows[userRowIndex][2];
+        
+        // Collect all active OTPs from column E for collision checking
+        const allOtps = userRows.map(r => r[4]).filter(val => val);
 
         // 2. Check for Pending Packages for this household
         const pkgResp = await sheets.spreadsheets.values.get({
@@ -212,13 +306,12 @@ async function handleUserPickupRequest(event, userId) {
             });
         }
 
-        // 3. Generate OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // 3. Generate Unique OTP
+        const otp = generateUniqueOTP(allOtps);
         const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes
         const otpString = `${otp}:${expiry}`;
 
         // 4. Save OTP to Users Sheet (Column E for OTP String)
-        // Note: Using Column E (Index 4) to store "OTP:Expiry"
         const sheetRow = userRowIndex + 1;
         await sheets.spreadsheets.values.update({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -682,8 +775,11 @@ app.post('/api/packages/:id/otp', async (req, res) => {
 
         const userId = userRows[userRowIndex][0];
         
+        // Check Collisions
+        const allOtps = userRows.map(r => r[4]).filter(val => val);
+        
         // Generate OTP
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = generateUniqueOTP(allOtps);
         const expiry = Date.now() + 10 * 60 * 1000;
         const otpString = `${otp}:${expiry}`;
         
