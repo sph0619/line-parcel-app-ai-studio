@@ -1,4 +1,4 @@
-import { PackageItem, PickupSession } from '../types';
+import { PackageItem, PickupSession, User } from '../types';
 
 // Points to the backend server endpoint
 const API_BASE_URL = '/api'; 
@@ -66,7 +66,6 @@ const mockService = {
 
   verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
       await new Promise(resolve => setTimeout(resolve, 800));
-      // Mock accepts '888888'
       if (otp !== '888888') throw new Error('Invalid Mock OTP (try 888888)');
       
       const current = mockService.getPackages();
@@ -78,6 +77,27 @@ const mockService = {
               signatureDataURL: signature
           } : p
       );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  },
+
+  getAllUsers: async (): Promise<User[]> => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return [
+          { lineId: 'mock1', householdId: '11A1', name: '王小明', status: 'APPROVED', joinDate: '2025-01-01' },
+          { lineId: 'mock2', householdId: '12B2', name: '林小美', status: 'APPROVED', joinDate: '2025-02-01' },
+      ];
+  },
+
+  deleteUser: async (lineId: string): Promise<void> => {
+      console.log(`[Mock] Deleted user ${lineId}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+  },
+
+  deletePackage: async (packageId: string): Promise<void> => {
+      console.log(`[Mock] Deleted package ${packageId}`);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const current = mockService.getPackages();
+      const updated = current.filter(p => p.packageId !== packageId);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   },
 
@@ -152,7 +172,6 @@ export const packageService = {
       }
   },
 
-  // New Methods for Batch Pickup (User Initiated)
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
     try {
         const response = await fetch(`${API_BASE_URL}/pickup/verify`, {
@@ -166,7 +185,6 @@ export const packageService = {
         }
         return await response.json();
     } catch (e) {
-        // Only fallback if status is 500 or network error, NOT 400 (logic error)
         if (e instanceof Error && e.message === '驗證失敗') throw e; 
         console.warn("OTP Check failed, trying mock", e);
         return mockService.verifyPickupOTP(otp);
@@ -186,7 +204,6 @@ export const packageService = {
       }
   },
 
-  // Methods for Individual Pickup (Admin Initiated)
   generateOTP: async (packageId: string): Promise<void> => {
       try {
           const response = await fetch(`${API_BASE_URL}/packages/${packageId}/otp`, {
@@ -214,6 +231,38 @@ export const packageService = {
           console.warn("API fail, using mock", e);
           if (e instanceof Error && (e.message.includes('領取失敗') || e.message.includes('無效'))) throw e;
           return mockService.verifyAndPickup(packageId, otp, signature);
+      }
+  },
+
+  // Management APIs
+  getAllUsers: async (): Promise<User[]> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/users`);
+          if (!response.ok) throw new Error('API Error');
+          return await response.json();
+      } catch (e) {
+          console.warn("API fail, using mock", e);
+          return mockService.getAllUsers();
+      }
+  },
+
+  deleteUser: async (lineId: string): Promise<void> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/users/${lineId}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error('Delete failed');
+      } catch (e) {
+          console.warn("API fail, using mock", e);
+          return mockService.deleteUser(lineId);
+      }
+  },
+
+  deletePackage: async (packageId: string): Promise<void> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/packages/${packageId}`, { method: 'DELETE' });
+          if (!response.ok) throw new Error('Delete failed');
+      } catch (e) {
+          console.warn("API fail, using mock", e);
+          return mockService.deletePackage(packageId);
       }
   },
 
