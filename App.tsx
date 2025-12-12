@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Package, CheckSquare, LayoutDashboard, History, Bell } from 'lucide-react';
-import { PackageList } from './components/PackageList';
 import { CheckInForm } from './components/CheckInForm';
 import { StatsDashboard } from './components/StatsDashboard';
 import { HistoryLog } from './components/HistoryLog';
+import { PickupFlow } from './components/PickupFlow';
 import { Toaster } from './components/Toaster';
 import { PackageItem, TabType } from './types';
 import { packageService } from './services/packageService';
@@ -37,7 +37,8 @@ export default function App() {
       case 'checkin':
         return <CheckInForm onPackageAdded={refreshData} />;
       case 'pickup':
-        return <PackageList packages={packages.filter(p => p.status === 'Pending')} onUpdate={refreshData} mode="pickup" />;
+        // New Workflow: OTP-based pickup
+        return <PickupFlow onSuccess={refreshData} />;
       case 'history':
         return <HistoryLog packages={packages} />;
       default:
