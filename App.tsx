@@ -14,6 +14,7 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(packageService.isLoggedIn());
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [packages, setPackages] = useState<PackageItem[]>([]);
+  const [userCount, setUserCount] = useState<number>(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Initial data load - only if authenticated
@@ -22,10 +23,16 @@ export default function App() {
     
     const fetchData = async () => {
       try {
-        const data = await packageService.getPackages();
-        setPackages(data);
+        // Fetch packages and users in parallel
+        const [pkgData, userData] = await Promise.all([
+          packageService.getPackages(),
+          packageService.getAllUsers()
+        ]);
+        
+        setPackages(pkgData);
+        setUserCount(userData.length);
       } catch (error) {
-        console.error("Failed to fetch packages", error);
+        console.error("Failed to fetch data", error);
       }
     };
     fetchData();
@@ -43,7 +50,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <StatsDashboard packages={packages} />;
+        return <StatsDashboard packages={packages} userCount={userCount} />;
       case 'checkin':
         return <CheckInForm onPackageAdded={refreshData} />;
       case 'pickup':
@@ -53,7 +60,7 @@ export default function App() {
       case 'management':
         return <ManagementPanel packages={packages} onUpdate={refreshData} />;
       default:
-        return <StatsDashboard packages={packages} />;
+        return <StatsDashboard packages={packages} userCount={userCount} />;
     }
   };
 
