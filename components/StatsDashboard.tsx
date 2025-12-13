@@ -5,9 +5,10 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 
 interface Props {
   packages: PackageItem[];
+  userCount: number;
 }
 
-export const StatsDashboard: React.FC<Props> = ({ packages }) => {
+export const StatsDashboard: React.FC<Props> = ({ packages, userCount }) => {
   const stats = useMemo(() => {
     const pending = packages.filter(p => p.status === 'Pending').length;
     
@@ -69,7 +70,7 @@ export const StatsDashboard: React.FC<Props> = ({ packages }) => {
         />
         <StatCard 
           title="活躍住戶數" 
-          value="124" 
+          value={userCount} 
           subtext="已綁定 Line 帳號"
           icon={<UserCheck className="text-purple-600" />} 
           bg="bg-purple-50" 
