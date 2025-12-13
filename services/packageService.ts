@@ -3,6 +3,7 @@ import { PackageItem, PickupSession, User } from '../types';
 // Points to the backend server endpoint
 const API_BASE_URL = '/api'; 
 const STORAGE_KEY = 'community_packages_v2_fallback';
+const AUTH_KEY = 'community_auth_token';
 
 // --- MOCK IMPLEMENTATION (Fallback) ---
 const mockService = {
@@ -36,7 +37,8 @@ const mockService = {
   // Mock new methods
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
       await new Promise(resolve => setTimeout(resolve, 800));
-      if (otp === '888888') {
+      // Update Mock to 4 digits
+      if (otp === '8888') {
           return {
               user: { name: '王小明', householdId: '11A1' },
               packages: mockService.getPackages().filter(p => p.householdId === '11A1' && p.status === 'Pending')
@@ -66,7 +68,8 @@ const mockService = {
 
   verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
       await new Promise(resolve => setTimeout(resolve, 800));
-      if (otp !== '888888') throw new Error('Invalid Mock OTP (try 888888)');
+      // Update Mock to 4 digits
+      if (otp !== '8888') throw new Error('Invalid Mock OTP (try 8888)');
       
       const current = mockService.getPackages();
       const updated = current.map(p => 
@@ -99,6 +102,15 @@ const mockService = {
       const current = mockService.getPackages();
       const updated = current.filter(p => p.packageId !== packageId);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  },
+
+  login: async (u: string, p: string): Promise<void> => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      if (u === 'admin' && p === 'admin') {
+          localStorage.setItem(AUTH_KEY, 'mock_token');
+          return;
+      }
+      throw new Error('帳號或密碼錯誤');
   },
 
   seed: () => {
@@ -264,6 +276,34 @@ export const packageService = {
           console.warn("API fail, using mock", e);
           return mockService.deletePackage(packageId);
       }
+  },
+  
+  // Auth
+  login: async (u: string, p: string): Promise<void> => {
+      try {
+          const response = await fetch(`${API_BASE_URL}/login`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: u, password: p }),
+          });
+          if (!response.ok) {
+               const err = await response.json();
+               throw new Error(err.error || 'Login failed');
+          }
+          const data = await response.json();
+          localStorage.setItem(AUTH_KEY, data.token);
+      } catch (e) {
+          console.warn("Login API fail, using mock", e);
+          return mockService.login(u, p);
+      }
+  },
+  
+  isLoggedIn: (): boolean => {
+      return !!localStorage.getItem(AUTH_KEY);
+  },
+
+  logout: () => {
+      localStorage.removeItem(AUTH_KEY);
   },
 
   seedData: () => mockService.seed()
