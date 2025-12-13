@@ -72,6 +72,46 @@ async function getSheetId(sheets, spreadsheetId, title) {
     return sheet ? sheet.properties.sheetId : null;
 }
 
+// --- Admin Initialization ---
+async function checkAndSeedAdmin() {
+  try {
+    const auth = await getAuthClient();
+    if (!auth) return;
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+
+    // Check if admin sheet has data
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: 'admin!A:B', 
+    });
+
+    const rows = response.data.values || [];
+    
+    // If empty (or just header), seed default admin
+    // Assuming Row 1 might be headers like "Username", "Password"
+    // If completely empty or no "admin" user found:
+    const hasAdmin = rows.some(r => r[0] === 'admin');
+
+    if (!hasAdmin) {
+      console.log("Seeding default admin account...");
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: 'admin!A:B',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [['admin', 'admin']] // Default credentials
+        }
+      });
+    }
+  } catch (error) {
+    console.warn("Admin Sheet Check Failed (Normal if sheet doesn't exist yet):", error.message);
+  }
+}
+
+// Run admin check on startup
+checkAndSeedAdmin();
+
 // --- Helper: Find Line User IDs ---
 async function getLineUsersByHousehold(householdId, recipientName = null) {
   try {
@@ -102,16 +142,17 @@ async function getLineUsersByHousehold(householdId, recipientName = null) {
   }
 }
 
-// --- Helper: Generate Unique OTP ---
+// --- Helper: Generate Unique OTP (4 Digits) ---
 function generateUniqueOTP(existingOtps) {
     let otp;
     let isUnique = false;
     let attempts = 0;
     
     while (!isUnique && attempts < 10) {
-        otp = Math.floor(100000 + Math.random() * 900000).toString();
+        // CHANGED: 4 Digits (1000 - 9999)
+        otp = Math.floor(1000 + Math.random() * 9000).toString();
+        
         // Check if this OTP exists in the list of active OTPs
-        // extract code part from "CODE:EXPIRY" format
         const collision = existingOtps.some(entry => entry && entry.startsWith(otp + ':'));
         if (!collision) {
             isUnique = true;
@@ -306,7 +347,7 @@ async function handleUserPickupRequest(event, userId) {
             });
         }
 
-        // 3. Generate Unique OTP
+        // 3. Generate Unique OTP (4 Digits)
         const otp = generateUniqueOTP(allOtps);
         const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes
         const otpString = `${otp}:${expiry}`;
@@ -386,6 +427,35 @@ async function notifyUser(householdId, barcode, recipientName = null) {
 }
 
 // --- API Routes ---
+
+// Login API
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: "Missing credentials" });
+
+  try {
+    const auth = await getAuthClient();
+    if (!auth) throw new Error("No Credentials");
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: process.env.GOOGLE_SHEET_ID,
+        range: 'admin!A:B', // Col A: Username, Col B: Password
+    });
+
+    const rows = response.data.values || [];
+    const isValid = rows.some(r => r[0] === username && r[1] === password);
+
+    if (isValid) {
+      res.json({ success: true, token: 'session_ok' });
+    } else {
+      res.status(401).json({ error: "帳號或密碼錯誤" });
+    }
+  } catch (error) {
+    console.error("Login Error:", error.message);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
 
 // 1. Get Residents (Line Users)
 app.get('/api/users', async (req, res) => {
@@ -778,7 +848,7 @@ app.post('/api/packages/:id/otp', async (req, res) => {
         // Check Collisions
         const allOtps = userRows.map(r => r[4]).filter(val => val);
         
-        // Generate OTP
+        // Generate OTP (4 Digits)
         const otp = generateUniqueOTP(allOtps);
         const expiry = Date.now() + 10 * 60 * 1000;
         const otpString = `${otp}:${expiry}`;
