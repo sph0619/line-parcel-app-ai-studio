@@ -1,21 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings } from 'lucide-react';
+import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings, LogOut } from 'lucide-react';
 import { CheckInForm } from './components/CheckInForm';
 import { StatsDashboard } from './components/StatsDashboard';
 import { HistoryLog } from './components/HistoryLog';
 import { PickupFlow } from './components/PickupFlow';
 import { ManagementPanel } from './components/ManagementPanel';
+import { LoginForm } from './components/LoginForm';
 import { Toaster } from './components/Toaster';
 import { PackageItem, TabType } from './types';
 import { packageService } from './services/packageService';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(packageService.isLoggedIn());
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Initial data load
+  // Initial data load - only if authenticated
   useEffect(() => {
+    if (!isAuthenticated) return;
+    
     const fetchData = async () => {
       try {
         const data = await packageService.getPackages();
@@ -25,10 +29,15 @@ export default function App() {
       }
     };
     fetchData();
-  }, [refreshTrigger]);
+  }, [refreshTrigger, isAuthenticated]);
 
   const refreshData = () => {
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleLogout = () => {
+    packageService.logout();
+    setIsAuthenticated(false);
   };
 
   const renderContent = () => {
@@ -59,10 +68,19 @@ export default function App() {
     }
   };
 
+  if (!isAuthenticated) {
+    return (
+      <>
+        <LoginForm onLoginSuccess={() => setIsAuthenticated(true)} />
+        <Toaster />
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row text-slate-800 font-[Inter]">
       {/* Sidebar Navigation */}
-      <aside className="bg-slate-900 text-white w-full md:w-64 flex-shrink-0 transition-all duration-300">
+      <aside className="bg-slate-900 text-white w-full md:w-64 flex-shrink-0 transition-all duration-300 flex flex-col">
         <div className="p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
             <div className="bg-blue-500 p-2 rounded-lg">
@@ -75,7 +93,7 @@ export default function App() {
           </div>
         </div>
         
-        <nav className="p-4 space-y-2">
+        <nav className="p-4 space-y-2 flex-1">
           <NavButton 
             active={activeTab === 'dashboard'} 
             onClick={() => setActiveTab('dashboard')} 
@@ -109,7 +127,17 @@ export default function App() {
           />
         </nav>
 
-        <div className="mt-auto p-6 border-t border-slate-700 text-xs text-slate-500">
+        <div className="p-4 border-t border-slate-700">
+          <button 
+             onClick={handleLogout}
+             className="w-full flex items-center gap-3 p-3 rounded-xl text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-all"
+          >
+             <LogOut size={20} />
+             <span className="font-medium">登出系統</span>
+          </button>
+        </div>
+
+        <div className="p-6 pt-2 text-xs text-slate-500">
           <p>系統狀態: 線上 (Online)</p>
           <p>Line Bot: 已連線</p>
         </div>
