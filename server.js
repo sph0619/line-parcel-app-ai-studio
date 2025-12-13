@@ -454,7 +454,14 @@ app.post('/api/packages', async (req, res) => {
     if (isDuplicate) return res.status(400).json({ error: "此條碼已存在且尚未被領取，無法重複登錄。" });
     const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || ''];
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
-    notifyUser(householdId, barcode, recipientName).catch(err => console.error("Async Notify Error:", err));
+    
+    // IMPORTANT FIX: Await notification before sending response in Serverless environment
+    try {
+        await notifyUser(householdId, barcode, recipientName);
+    } catch (err) {
+        console.error("Notify Error (Non-blocking):", err);
+    }
+
     res.json({ success: true, packageId: newPackage[0] });
   } catch (error) {
     console.error("API Error (Add Package):", error.message);
