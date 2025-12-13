@@ -38,10 +38,10 @@ export const PickupModal: React.FC<Props> = ({ pkg, onClose, onSuccess }) => {
     // OR we can implement a verify endpoint check here.
     // For this blueprint, we verify OTP *together* with pickup or just proceed to signature
     // depending on strictness. Let's proceed to signature for UX, then verify all at end.
-    if (otpInput.length === 6) {
+    if (otpInput.length === 4) {
        setStep('SIGNATURE');
     } else {
-       triggerToast('請輸入 6 位數驗證碼', 'error');
+       triggerToast('請輸入 4 位數驗證碼', 'error');
     }
   };
 
@@ -120,25 +120,25 @@ export const PickupModal: React.FC<Props> = ({ pkg, onClose, onSuccess }) => {
               <div className="text-center">
                 <h4 className="font-bold text-xl text-slate-800 mb-2">輸入驗證碼</h4>
                 <p className="text-sm text-slate-500">
-                  請詢問住戶手機收到的 6 位數驗證碼。
+                  請詢問住戶手機收到的 4 位數驗證碼。
                 </p>
               </div>
 
               <div className="flex justify-center">
                  <input
                   type="text"
-                  maxLength={6}
+                  maxLength={4}
                   value={otpInput}
                   onChange={(e) => setOtpInput(e.target.value.replace(/\D/g,''))}
                   className="w-48 text-center text-3xl tracking-[0.5em] font-mono border-b-2 border-blue-500 focus:outline-none py-2 bg-transparent"
-                  placeholder="------"
+                  placeholder="----"
                   autoFocus
                  />
               </div>
 
               <button
                 onClick={verifyOTP}
-                disabled={otpInput.length !== 6}
+                disabled={otpInput.length !== 4}
                 className="w-full bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white py-3 rounded-xl font-bold transition-all"
               >
                 驗證代碼
