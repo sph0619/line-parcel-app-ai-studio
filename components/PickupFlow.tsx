@@ -22,8 +22,8 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
   // Step 1: Verify OTP
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp.length !== 6) {
-        triggerToast('請輸入 6 位數驗證碼', 'error');
+    if (otp.length !== 4) {
+        triggerToast('請輸入 4 位數驗證碼', 'error');
         return;
     }
     setLoading(true);
@@ -104,21 +104,21 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
                       <ShieldCheck size={32} className="text-blue-600" />
                   </div>
                   <h2 className="text-2xl font-bold text-slate-800 mb-2">領取包裹驗證</h2>
-                  <p className="text-slate-500 mb-8">請輸入住戶 Line 收到的 6 位數驗證碼</p>
+                  <p className="text-slate-500 mb-8">請輸入住戶 Line 收到的 4 位數驗證碼</p>
                   
                   <form onSubmit={handleVerify}>
                       <input
                           type="text"
-                          maxLength={6}
+                          maxLength={4}
                           value={otp}
                           onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                           className="w-full text-center text-4xl tracking-[0.5em] font-mono border-2 border-slate-200 rounded-xl py-4 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all mb-6"
-                          placeholder="------"
+                          placeholder="----"
                           autoFocus
                       />
                       <button
                           type="submit"
-                          disabled={loading || otp.length !== 6}
+                          disabled={loading || otp.length !== 4}
                           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all"
                       >
                           {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />}
