@@ -184,13 +184,22 @@ async function handleLineEvent(event) {
   const userMessage = event.message.text.trim();
   const userId = event.source.userId;
 
-  // 1. Handle Registration
+  // 0. Specific Menu Action for Registration Help (New Feature)
+  // 此處處理當用戶點擊圖文選單「綁定住戶」時的自動回覆
+  if (userMessage === '綁定住戶' || userMessage === '綁定') {
+    return lineClient.replyMessage(event.replyToken, {
+      type: 'text',
+      text: '請依照以下格式輸入: 綁定 戶號 姓名 (範例: 綁定 10A1 王小明)'
+    });
+  }
+
+  // 1. Handle Registration (Actual Logic)
   if (userMessage.startsWith('綁定') || userMessage.toLowerCase().startsWith('reg')) {
     const parts = userMessage.split(/\s+/); 
     if (parts.length < 3) {
       return lineClient.replyMessage(event.replyToken, {
         type: 'text',
-        text: '指令格式：\n請輸入：「綁定 您的戶號 您的姓名」\n例如：「綁定 11A1 王小明」'
+        text: '指令格式不完整。\n請依照: 綁定 戶號 姓名 (範例: 綁定 10A1 王小明)'
       });
     }
 
