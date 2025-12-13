@@ -30,8 +30,13 @@ const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret)
   ? new Client(lineConfig) 
   : null;
 
+// Middleware for Line Webhook
 app.use('/callback', middleware(lineConfig));
+
+// Middleware for JSON body parsing
 app.use(express.json());
+
+// CORS configuration
 app.use(cors());
 
 // Health Check
@@ -89,8 +94,6 @@ async function checkAndSeedAdmin() {
     const rows = response.data.values || [];
     
     // If empty (or just header), seed default admin
-    // Assuming Row 1 might be headers like "Username", "Password"
-    // If completely empty or no "admin" user found:
     const hasAdmin = rows.some(r => r[0] === 'admin');
 
     if (!hasAdmin) {
@@ -105,11 +108,11 @@ async function checkAndSeedAdmin() {
       });
     }
   } catch (error) {
-    console.warn("Admin Sheet Check Failed (Normal if sheet doesn't exist yet):", error.message);
+    // console.warn("Admin Sheet Check Failed (Normal if sheet doesn't exist yet):", error.message);
   }
 }
 
-// Run admin check on startup
+// Run admin check on startup (Note: In serverless, this runs on every cold start)
 checkAndSeedAdmin();
 
 // --- Helper: Find Line User IDs ---
@@ -149,10 +152,7 @@ function generateUniqueOTP(existingOtps) {
     let attempts = 0;
     
     while (!isUnique && attempts < 10) {
-        // CHANGED: 4 Digits (1000 - 9999)
         otp = Math.floor(1000 + Math.random() * 9000).toString();
-        
-        // Check if this OTP exists in the list of active OTPs
         const collision = existingOtps.some(entry => entry && entry.startsWith(otp + ':'));
         if (!collision) {
             isUnique = true;
@@ -184,7 +184,7 @@ async function handleLineEvent(event) {
   const userMessage = event.message.text.trim();
   const userId = event.source.userId;
 
-  // 1. Handle Registration: 綁定 戶號 姓名
+  // 1. Handle Registration
   if (userMessage.startsWith('綁定') || userMessage.toLowerCase().startsWith('reg')) {
     const parts = userMessage.split(/\s+/); 
     if (parts.length < 3) {
@@ -219,12 +219,12 @@ async function handleLineEvent(event) {
     });
   }
 
-  // 2. Handle Pickup Request: 領取
+  // 2. Handle Pickup Request
   if (['領取', 'pickup', '取件'].includes(userMessage.toLowerCase())) {
       return handleUserPickupRequest(event, userId);
   }
 
-  // 3. Handle Check Request: 查詢包裹
+  // 3. Handle Check Request
   if (['查詢', '查詢包裹', 'check', 'query'].includes(userMessage.toLowerCase())) {
       return handleUserQueryPackages(event, userId);
   }
@@ -235,217 +235,125 @@ async function handleLineEvent(event) {
   });
 }
 
-// 處理用戶 "查詢包裹" 指令
+// Logic functions (Same as before, abbreviated for clarity, but logic preserved)
 async function handleUserQueryPackages(event, userId) {
+    // ... logic remains same ...
     try {
         const auth = await getAuthClient();
         if (!auth) return;
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // Get User Info
-        const userResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:C',
-        });
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
         const userRows = userResp.data.values || [];
         const user = userRows.find(r => r[0] === userId);
 
         if (!user) {
-            return lineClient.replyMessage(event.replyToken, {
-                type: 'text',
-                text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」'
-            });
+            return lineClient.replyMessage(event.replyToken, { type: 'text', text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」' });
         }
-        
         const householdId = user[1];
-
-        // Get Packages
-        const pkgResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:J', // Need RecipientName(J), Barcode(B), Status(D), Date(E)
-        });
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:J' });
         const pkgRows = pkgResp.data.values || [];
-        
-        // Filter: Match Household AND Status is Pending
         const pendingPkgs = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending');
 
         if (pendingPkgs.length === 0) {
-            return lineClient.replyMessage(event.replyToken, {
-                type: 'text',
-                text: `查詢結果：${householdId}\n\n目前沒有待領取的包裹。`
-            });
+            return lineClient.replyMessage(event.replyToken, { type: 'text', text: `查詢結果：${householdId}\n\n目前沒有待領取的包裹。` });
         }
-
-        // Build List
         let replyText = `查詢結果：${householdId}\n待領包裹共 ${pendingPkgs.length} 件：\n`;
-        
         pendingPkgs.forEach((pkg, index) => {
             const barcode = pkg[1];
             const date = new Date(pkg[4]);
             const dateStr = `${(date.getMonth()+1)}/${date.getDate()}`;
             const recipient = pkg[9] ? `(${pkg[9]})` : '';
             const shortCode = barcode.length > 5 ? `...${barcode.slice(-5)}` : barcode;
-            
             replyText += `\n${index + 1}. [${dateStr}] ${shortCode} ${recipient}`;
         });
-
         replyText += `\n\n輸入「領取」可獲取驗證碼。`;
-
-        return lineClient.replyMessage(event.replyToken, {
-            type: 'text',
-            text: replyText
-        });
-
+        return lineClient.replyMessage(event.replyToken, { type: 'text', text: replyText });
     } catch (e) {
         console.error("Query Package Error", e);
         return lineClient.replyMessage(event.replyToken, { type: 'text', text: '系統忙碌中' });
     }
 }
 
-// 處理用戶 "領取" 指令
 async function handleUserPickupRequest(event, userId) {
+    // ... logic remains same ...
     try {
         const auth = await getAuthClient();
         if (!auth) return;
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // 1. Get User Info & All Existing OTPs (Column E) for collision check
-        const userResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:E', // A:Id, B:Household, C:Name, D:Date, E:OTP(Pending)
-        });
-        
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:E' });
         const userRows = userResp.data.values || [];
         const userRowIndex = userRows.findIndex(r => r[0] === userId);
 
         if (userRowIndex === -1) {
-            return lineClient.replyMessage(event.replyToken, {
-                type: 'text',
-                text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」'
-            });
+            return lineClient.replyMessage(event.replyToken, { type: 'text', text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」' });
         }
-
         const householdId = userRows[userRowIndex][1];
         const userName = userRows[userRowIndex][2];
-        
-        // Collect all active OTPs from column E for collision checking
         const allOtps = userRows.map(r => r[4]).filter(val => val);
-
-        // 2. Check for Pending Packages for this household
-        const pkgResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!B:D', // B:Barcode, C:Household, D:Status
-        });
-        
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
         const pkgRows = pkgResp.data.values || [];
         const pendingCount = pkgRows.filter(r => r[1] === householdId && r[2] === 'Pending').length;
 
         if (pendingCount === 0) {
-            return lineClient.replyMessage(event.replyToken, {
-                type: 'text',
-                text: `查詢結果：${householdId} (${userName})\n\n目前沒有您的待領包裹。`
-            });
+            return lineClient.replyMessage(event.replyToken, { type: 'text', text: `查詢結果：${householdId} (${userName})\n\n目前沒有您的待領包裹。` });
         }
-
-        // 3. Generate Unique OTP (4 Digits)
         const otp = generateUniqueOTP(allOtps);
-        const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes
+        const expiry = Date.now() + 10 * 60 * 1000;
         const otpString = `${otp}:${expiry}`;
-
-        // 4. Save OTP to Users Sheet (Column E for OTP String)
         const sheetRow = userRowIndex + 1;
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: `Users!E${sheetRow}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[otpString]] }
-        });
+        await sheets.spreadsheets.values.update({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: `Users!E${sheetRow}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[otpString]] } });
 
-        return lineClient.replyMessage(event.replyToken, {
-            type: 'text',
-            text: `🔐 取件驗證碼：【 ${otp} 】\n\n待領包裹：${pendingCount} 件\n有效時間：10 分鐘\n\n請將此號碼出示給管理室人員。`
-        });
-
+        return lineClient.replyMessage(event.replyToken, { type: 'text', text: `🔐 取件驗證碼：【 ${otp} 】\n\n待領包裹：${pendingCount} 件\n有效時間：10 分鐘\n\n請將此號碼出示給管理室人員。` });
     } catch (e) {
         console.error("Handle Pickup Error", e);
-        return lineClient.replyMessage(event.replyToken, {
-            type: 'text',
-            text: '系統繁忙中，請稍後再試。'
-        });
+        return lineClient.replyMessage(event.replyToken, { type: 'text', text: '系統繁忙中，請稍後再試。' });
     }
 }
 
 async function registerLineUser(lineUserId, householdId, name) {
-  try {
-    const auth = await getAuthClient();
-    if (!auth) return { success: false, message: "System Error" };
-    const sheets = google.sheets({ version: 'v4', auth });
-    
-    // Check for duplicates (Household + Name)
-    const existing = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: 'Users!A:C',
-    });
-
-    const rows = existing.data.values || [];
-    const isDuplicate = rows.some(row => row[1] === householdId && row[2] === name);
-    
-    if (isDuplicate) {
-        return { success: false, message: `綁定失敗：住戶「${name}」已在戶號「${householdId}」綁定過。` };
+    // ... logic remains same ...
+    try {
+        const auth = await getAuthClient();
+        if (!auth) return { success: false, message: "System Error" };
+        const sheets = google.sheets({ version: 'v4', auth });
+        const existing = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
+        const rows = existing.data.values || [];
+        const isDuplicate = rows.some(row => row[1] === householdId && row[2] === name);
+        if (isDuplicate) return { success: false, message: `綁定失敗：住戶「${name}」已在戶號「${householdId}」綁定過。` };
+        await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId, name, new Date().toISOString(), '']] } });
+        return { success: true };
+    } catch (error) {
+        console.error("Register User Error:", error);
+        return { success: false, message: "系統連線錯誤，請稍後再試。" };
     }
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Users!A:A', // Use A:A to append row properly
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { 
-        values: [[lineUserId, householdId, name, new Date().toISOString(), '']] 
-      },
-    });
-    return { success: true };
-  } catch (error) {
-    console.error("Register User Error:", error);
-    return { success: false, message: "系統連線錯誤，請稍後再試。" };
-  }
 }
 
 async function notifyUser(householdId, barcode, recipientName = null) {
   if (!lineClient) return;
-
   const uniqueUsers = await getLineUsersByHousehold(householdId, recipientName);
-
   if (uniqueUsers.length > 0) {
     const message = {
       type: 'text',
       text: `📦 包裹到貨通知！\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快輸入「領取」以獲取驗證碼。`
     };
-
     await Promise.all(uniqueUsers.map(uid => lineClient.pushMessage(uid, message)));
-    console.log(`已發送 Line 通知給 ${uniqueUsers.length} 位用戶`);
   }
 }
 
-// --- API Routes ---
+// --- API Routes (Prefix /api is optional here if handling in index.js, but kept for structure) ---
+// Note: In Vercel serverless, this app object handles the request.
 
 // Login API
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).json({ error: "Missing credentials" });
-
   try {
     const auth = await getAuthClient();
     if (!auth) throw new Error("No Credentials");
     const sheets = google.sheets({ version: 'v4', auth });
-
-    const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: 'admin!A:B', // Col A: Username, Col B: Password
-    });
-
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'admin!A:B' });
     const rows = response.data.values || [];
     const isValid = rows.some(r => r[0] === username && r[1] === password);
-
     if (isValid) {
       res.json({ success: true, token: 'session_ok' });
     } else {
@@ -457,26 +365,18 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 1. Get Residents (Line Users)
+// Other APIs (Users, Packages, Pickup, etc.)
+// ... (The rest of API endpoints remain exactly the same as previous version)
+// Just copying one for brevity, assume all app.get/post/delete are here.
+
 app.get('/api/users', async (req, res) => {
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-        
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:D', // A:ID, B:Household, C:Name, D:Date
-        });
-        
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
         const rows = response.data.values || [];
-        const users = rows.map(row => ({
-            lineId: row[0],
-            householdId: row[1],
-            name: row[2],
-            joinDate: row[3],
-            status: 'APPROVED'
-        }));
+        const users = rows.map(row => ({ lineId: row[0], householdId: row[1], name: row[2], joinDate: row[3], status: 'APPROVED' }));
         res.json(users);
     } catch (error) {
         console.error("Get Users Error:", error.message);
@@ -484,45 +384,19 @@ app.get('/api/users', async (req, res) => {
     }
 });
 
-// Delete User
 app.delete('/api/users/:lineId', async (req, res) => {
     const { lineId } = req.params;
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // 1. Find Row Index
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:A',
-        });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A' });
         const rows = response.data.values || [];
         const rowIndex = rows.findIndex(r => r[0] === lineId);
-
         if (rowIndex === -1) return res.status(404).json({ error: "User not found" });
-
-        // 2. Get Sheet ID
         const sheetId = await getSheetId(sheets, process.env.GOOGLE_SHEET_ID, 'Users');
         if (sheetId === null) throw new Error("Sheet 'Users' not found");
-
-        // 3. Delete Row
-        await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            requestBody: {
-                requests: [{
-                    deleteDimension: {
-                        range: {
-                            sheetId: sheetId,
-                            dimension: 'ROWS',
-                            startIndex: rowIndex,
-                            endIndex: rowIndex + 1
-                        }
-                    }
-                }]
-            }
-        });
-
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { requests: [{ deleteDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 } } }] } });
         res.json({ success: true });
     } catch (error) {
         console.error("Delete User Error:", error.message);
@@ -536,17 +410,9 @@ app.get('/api/households/:id/residents', async (req, res) => {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-        
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!B:C',
-        });
-        
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!B:C' });
         const rows = response.data.values || [];
-        const residents = rows
-            .filter(row => row[0] === householdId && row[1])
-            .map(row => row[1]);
-            
+        const residents = rows.filter(row => row[0] === householdId && row[1]).map(row => row[1]);
         const uniqueResidents = [...new Set(residents)];
         res.json(uniqueResidents);
     } catch (error) {
@@ -559,29 +425,13 @@ app.get('/api/packages', async (req, res) => {
   try {
     const auth = await getAuthClient();
     if (!auth) throw new Error("No Credentials");
-
     const sheets = google.sheets({ version: 'v4', auth });
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:J', 
-    });
-
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:J' });
     const rows = response.data.values;
     if (!rows || rows.length === 0) return res.json([]);
-
     const packages = rows.slice(1).map(row => ({
-      packageId: row[0],
-      barcode: row[1],
-      householdId: row[2],
-      status: row[3],
-      receivedTime: row[4],
-      pickupTime: row[5],
-      pickupOTP: row[6] ? row[6].split(':')[0] : '',
-      signatureDataURL: row[7],
-      isOverdueNotified: row[8] === 'TRUE',
-      recipientName: row[9] || ''
+      packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6] ? row[6].split(':')[0] : '', signatureDataURL: row[7], isOverdueNotified: row[8] === 'TRUE', recipientName: row[9] || ''
     })).reverse();
-
     res.json(packages);
   } catch (error) {
     console.error("API Error (Get Packages):", error.message);
@@ -591,52 +441,20 @@ app.get('/api/packages', async (req, res) => {
 
 app.post('/api/packages', async (req, res) => {
   const { householdId, barcode, recipientName } = req.body;
-
   if (!validateHouseholdId(householdId)) {
     return res.status(400).json({ error: "戶號格式錯誤。請確認：樓層3-19、棟別A/B/C、門牌1-4。" });
   }
-
   try {
     const auth = await getAuthClient();
     if (!auth) throw new Error("No Credentials");
-
     const sheets = google.sheets({ version: 'v4', auth });
-
-    const existingData = await sheets.spreadsheets.values.get({
-        spreadsheetId: process.env.GOOGLE_SHEET_ID,
-        range: 'Packages!B:D', 
-    });
-    
+    const existingData = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const existingRows = existingData.data.values || [];
     const isDuplicate = existingRows.some(row => row[0] === barcode && row[2] === 'Pending');
-    
-    if (isDuplicate) {
-        return res.status(400).json({ error: "此條碼已存在且尚未被領取，無法重複登錄。" });
-    }
-
-    const newPackage = [
-      `PKG${Date.now()}`,
-      barcode,
-      householdId,
-      'Pending',
-      new Date().toISOString(),
-      '', 
-      '', 
-      '', 
-      'FALSE', 
-      recipientName || '' 
-    ];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.GOOGLE_SHEET_ID,
-      range: 'Packages!A:A', 
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      requestBody: { values: [newPackage] },
-    });
-
+    if (isDuplicate) return res.status(400).json({ error: "此條碼已存在且尚未被領取，無法重複登錄。" });
+    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || ''];
+    await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     notifyUser(householdId, barcode, recipientName).catch(err => console.error("Async Notify Error:", err));
-
     res.json({ success: true, packageId: newPackage[0] });
   } catch (error) {
     console.error("API Error (Add Package):", error.message);
@@ -644,45 +462,19 @@ app.post('/api/packages', async (req, res) => {
   }
 });
 
-// Delete Package
 app.delete('/api/packages/:packageId', async (req, res) => {
     const { packageId } = req.params;
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // 1. Find Row Index
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:A', // ID column
-        });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const rows = response.data.values || [];
         const rowIndex = rows.findIndex(r => r[0] === packageId);
-
         if (rowIndex === -1) return res.status(404).json({ error: "Package not found" });
-
-        // 2. Get Sheet ID
         const sheetId = await getSheetId(sheets, process.env.GOOGLE_SHEET_ID, 'Packages');
         if (sheetId === null) throw new Error("Sheet 'Packages' not found");
-
-        // 3. Delete Row
-        await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            requestBody: {
-                requests: [{
-                    deleteDimension: {
-                        range: {
-                            sheetId: sheetId,
-                            dimension: 'ROWS',
-                            startIndex: rowIndex,
-                            endIndex: rowIndex + 1
-                        }
-                    }
-                }]
-            }
-        });
-
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { requests: [{ deleteDimension: { range: { sheetId: sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 } } }] } });
         res.json({ success: true });
     } catch (error) {
         console.error("Delete Package Error:", error.message);
@@ -690,220 +482,113 @@ app.delete('/api/packages/:packageId', async (req, res) => {
     }
 });
 
-// --- NEW OTP PICKUP FLOW API ---
-
-// 1. Verify User OTP and Get Pending Packages (User Initiated)
 app.post('/api/pickup/verify', async (req, res) => {
     const { otp } = req.body;
     if (!otp) return res.status(400).json({ error: "Missing OTP" });
-
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // A. Search in Users Sheet for this OTP
-        const userResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:E', // E is OTP:Expiry
-        });
-        
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:E' });
         const userRows = userResp.data.values || [];
-        // row[4] is OTP string
         const user = userRows.find(r => {
              if (!r[4] || !r[4].includes(':')) return false;
              const [code, expiry] = r[4].split(':');
              return code === otp && Date.now() < parseInt(expiry);
         });
-
-        if (!user) {
-            return res.status(400).json({ error: "驗證碼無效或已過期" });
-        }
-
+        if (!user) return res.status(400).json({ error: "驗證碼無效或已過期" });
         const householdId = user[1];
         const userName = user[2];
-
-        // B. Fetch Pending Packages for this household
-        // Note: We return ALL pending packages for the household, not just the user's specific ones,
-        // because often family members pick up for each other. Frontend can highlight differences.
-        const pkgResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:J',
-        });
-        
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:J' });
         const pkgRows = pkgResp.data.values || [];
-        const pendingPackages = pkgRows.slice(1)
-            .filter(r => r[2] === householdId && r[3] === 'Pending')
-            .map(row => ({
-                packageId: row[0],
-                barcode: row[1],
-                householdId: row[2],
-                status: row[3],
-                receivedTime: row[4],
-                recipientName: row[9] || ''
+        const pendingPackages = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending').map(row => ({
+                packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], recipientName: row[9] || ''
             }));
-
-        if (pendingPackages.length === 0) {
-            return res.status(400).json({ error: "該住戶目前無待領包裹" });
-        }
-
-        res.json({
-            user: {
-                name: userName,
-                householdId: householdId
-            },
-            packages: pendingPackages
-        });
-
+        if (pendingPackages.length === 0) return res.status(400).json({ error: "該住戶目前無待領包裹" });
+        res.json({ user: { name: userName, householdId: householdId }, packages: pendingPackages });
     } catch (error) {
         console.error("Verify OTP Error:", error);
         res.status(500).json({ error: "Verification failed" });
     }
 });
 
-// 2. Batch Confirm Pickup
 app.post('/api/pickup/confirm', async (req, res) => {
     const { packageIds, signatureDataURL } = req.body;
-    
-    if (!packageIds || !Array.isArray(packageIds) || packageIds.length === 0) {
-        return res.status(400).json({ error: "No packages selected" });
-    }
-
+    if (!packageIds || !Array.isArray(packageIds) || packageIds.length === 0) return res.status(400).json({ error: "No packages selected" });
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        const list = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:A', // Just get IDs to find rows
-        });
-        
+        const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const rows = list.data.values || [];
         const updates = [];
         const now = new Date().toISOString();
-
-        // Prepare updates for each package
         for (const pid of packageIds) {
             const rowIndex = rows.findIndex(r => r[0] === pid);
             if (rowIndex !== -1) {
                 const sheetRow = rowIndex + 1;
                 updates.push(
-                    { range: `Packages!D${sheetRow}`, values: [['Picked Up']] }, // Status
-                    { range: `Packages!F${sheetRow}`, values: [[now]] }, // PickupTime
-                    { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] } // Signature
+                    { range: `Packages!D${sheetRow}`, values: [['Picked Up']] },
+                    { range: `Packages!F${sheetRow}`, values: [[now]] },
+                    { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] }
                 );
             }
         }
-
         if (updates.length > 0) {
-            await sheets.spreadsheets.values.batchUpdate({
-                spreadsheetId: process.env.GOOGLE_SHEET_ID,
-                requestBody: {
-                    valueInputOption: 'USER_ENTERED',
-                    data: updates
-                }
-            });
+            await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         }
-
         res.json({ success: true, count: updates.length / 3 });
-
     } catch (error) {
         console.error("Batch Confirm Error:", error);
         res.status(500).json({ error: "Confirmation failed" });
     }
 });
 
-// 3. Trigger OTP for specific package (Admin Initiated)
 app.post('/api/packages/:id/otp', async (req, res) => {
     const packageId = req.params.id;
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // Get Package Info
-        const pkgResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:C', // A:Id, B:Barcode, C:Household
-        });
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:C' });
         const pkgRows = pkgResp.data.values || [];
         const pkg = pkgRows.find(r => r[0] === packageId);
-        
         if (!pkg) return res.status(404).json({ error: "Package not found" });
         const householdId = pkg[2];
-
-        // Find User
-        const userResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:E',
-        });
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:E' });
         const userRows = userResp.data.values || [];
         const userRowIndex = userRows.findIndex(r => r[1] === householdId); 
-        
         if (userRowIndex === -1) return res.status(400).json({ error: "No user bound to this household" });
-
         const userId = userRows[userRowIndex][0];
-        
-        // Check Collisions
         const allOtps = userRows.map(r => r[4]).filter(val => val);
-        
-        // Generate OTP (4 Digits)
         const otp = generateUniqueOTP(allOtps);
         const expiry = Date.now() + 10 * 60 * 1000;
         const otpString = `${otp}:${expiry}`;
-        
-        // Save to Sheet (User row)
         const sheetRow = userRowIndex + 1;
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: `Users!E${sheetRow}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[otpString]] }
-        });
-
-        // Send Line Message
+        await sheets.spreadsheets.values.update({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: `Users!E${sheetRow}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[otpString]] } });
         if (lineClient) {
-             await lineClient.pushMessage(userId, {
-                 type: 'text',
-                 text: `🔐 管理室已發送領取驗證碼：【 ${otp} 】\n\n有效時間：10 分鐘\n請出示給管理員。`
-             });
+             await lineClient.pushMessage(userId, { type: 'text', text: `🔐 管理室已發送領取驗證碼：【 ${otp} 】\n\n有效時間：10 分鐘\n請出示給管理員。` });
         }
-        
         res.json({ success: true });
-
     } catch (e) {
         console.error("Generate OTP Error:", e);
         res.status(500).json({ error: "Failed to generate OTP" });
     }
 });
 
-// 4. Verify and Pickup Single Package (Admin Initiated)
 app.post('/api/packages/:id/pickup', async (req, res) => {
     const packageId = req.params.id;
     const { otp, signatureDataURL } = req.body;
-    
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-
-        // 1. Get Package Info
-        const pkgResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Packages!A:C', 
-        });
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:C' });
         const pkgRows = pkgResp.data.values || [];
         const pkgIndex = pkgRows.findIndex(r => r[0] === packageId);
-        
         if (pkgIndex === -1) return res.status(404).json({ error: "Package not found" });
         const householdId = pkgRows[pkgIndex][2];
-
-        // 2. Verify OTP against User of that household
-        const userResp = await sheets.spreadsheets.values.get({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            range: 'Users!A:E',
-        });
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:E' });
         const userRows = userResp.data.values || [];
         const user = userRows.find(r => {
              if (r[1] !== householdId) return false;
@@ -911,48 +596,23 @@ app.post('/api/packages/:id/pickup', async (req, res) => {
              const [code, expiry] = r[4].split(':');
              return code === otp && Date.now() < parseInt(expiry);
         });
-
         if (!user) return res.status(400).json({ error: "驗證碼無效或過期" });
-
-        // 3. Mark Package as Picked Up
         const now = new Date().toISOString();
         const sheetRow = pkgIndex + 1;
-        
-        await sheets.spreadsheets.values.batchUpdate({
-            spreadsheetId: process.env.GOOGLE_SHEET_ID,
-            requestBody: {
-                valueInputOption: 'USER_ENTERED',
-                data: [
-                    { range: `Packages!D${sheetRow}`, values: [['Picked Up']] },
-                    { range: `Packages!F${sheetRow}`, values: [[now]] },
-                    { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] },
-                    { range: `Packages!G${sheetRow}`, values: [[otp]] } // Optional: Save used OTP
-                ]
-            }
-        });
-
+        await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: [ { range: `Packages!D${sheetRow}`, values: [['Picked Up']] }, { range: `Packages!F${sheetRow}`, values: [[now]] }, { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] }, { range: `Packages!G${sheetRow}`, values: [[otp]] } ] } });
         res.json({ success: true });
-
     } catch (e) {
         console.error("Verify and Pickup Error:", e);
         res.status(500).json({ error: "Failed to pickup" });
     }
 });
 
-// --- Serve Frontend ---
-const distPath = path.join(__dirname, 'dist');
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-} else {
-  console.log("No dist folder found. Running in API-only mode or build failed.");
-  app.get('/', (req, res) => {
-    res.send('Server is running, but frontend build not found.');
+// IMPORTANT: Export app for Vercel
+export default app;
+
+// Only listen if running locally (Vercel ignores this)
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
   });
 }
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
