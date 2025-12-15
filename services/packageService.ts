@@ -1,4 +1,4 @@
-import { PackageItem, PickupSession, User } from '../types';
+import { PackageItem, PickupSession, User, PackageType } from '../types';
 
 // Points to the backend server endpoint
 const API_BASE_URL = '/api'; 
@@ -12,7 +12,7 @@ const mockService = {
     return data ? JSON.parse(data) : [];
   },
 
-  addPackage: async (householdId: string, barcode: string, recipientName?: string): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general'): Promise<PackageItem> => {
     await new Promise(resolve => setTimeout(resolve, 600)); 
     const newPkg: PackageItem = {
       packageId: `PKG${Date.now()}`,
@@ -22,6 +22,7 @@ const mockService = {
       status: 'Pending',
       receivedTime: new Date().toISOString(),
       isOverdueNotified: false,
+      packageType
     };
     const current = mockService.getPackages();
     localStorage.setItem(STORAGE_KEY, JSON.stringify([newPkg, ...current]));
@@ -34,10 +35,8 @@ const mockService = {
       return [];
   },
   
-  // Mock new methods
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
       await new Promise(resolve => setTimeout(resolve, 800));
-      // Update Mock to 4 digits
       if (otp === '8888') {
           return {
               user: { name: '王小明', householdId: '11A1' },
@@ -68,7 +67,6 @@ const mockService = {
 
   verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
       await new Promise(resolve => setTimeout(resolve, 800));
-      // Update Mock to 4 digits
       if (otp !== '8888') throw new Error('Invalid Mock OTP (try 8888)');
       
       const current = mockService.getPackages();
@@ -104,6 +102,21 @@ const mockService = {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   },
 
+  manualPickup: async (packageId: string): Promise<void> => {
+    console.log(`[Mock] Manual Pickup ${packageId}`);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const current = mockService.getPackages();
+    const updated = current.map(p => 
+        p.packageId === packageId ? {
+            ...p,
+            status: 'Picked Up' as const,
+            pickupTime: new Date().toISOString(),
+            signatureDataURL: 'Manual Pickup'
+        } : p
+    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  },
+
   login: async (u: string, p: string): Promise<void> => {
       await new Promise(resolve => setTimeout(resolve, 500));
       if (u === 'admin' && p === 'admin') {
@@ -123,18 +136,8 @@ const mockService = {
         recipientName: '王小明',
         status: 'Pending',
         receivedTime: new Date(Date.now() - 3600000).toISOString(), 
-        isOverdueNotified: false
-      },
-      {
-        packageId: 'PKG_SEED_2',
-        barcode: 'DHL987654321',
-        householdId: '12B2',
-        recipientName: '林小美',
-        status: 'Picked Up',
-        receivedTime: new Date(Date.now() - 86400000).toISOString(), 
-        pickupTime: new Date(Date.now() - 82800000).toISOString(),
-        signatureDataURL: '', 
-        isOverdueNotified: false
+        isOverdueNotified: false,
+        packageType: 'general'
       }
     ];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(initialData));
@@ -156,12 +159,12 @@ export const packageService = {
     }
   },
 
-  addPackage: async (householdId: string, barcode: string, recipientName?: string): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general'): Promise<PackageItem> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ householdId, barcode, recipientName }),
+        body: JSON.stringify({ householdId, barcode, recipientName, packageType }),
       });
       if (!response.ok) {
         const err = await response.json();
@@ -276,6 +279,16 @@ export const packageService = {
           console.warn("API fail, using mock", e);
           return mockService.deletePackage(packageId);
       }
+  },
+
+  manualPickup: async (packageId: string): Promise<void> => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/packages/${packageId}/manual-pickup`, { method: 'POST' });
+        if (!response.ok) throw new Error('Manual pickup failed');
+    } catch (e) {
+        console.warn("API fail, using mock", e);
+        return mockService.manualPickup(packageId);
+    }
   },
   
   // Auth
