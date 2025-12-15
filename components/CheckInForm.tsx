@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users } from 'lucide-react';
+import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { PackageType } from '../types';
 
 interface Props {
   onPackageAdded: () => void;
@@ -15,6 +16,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [fetchingResidents, setFetchingResidents] = useState(false);
   
   const [barcode, setBarcode] = useState('');
+  const [packageType, setPackageType] = useState<PackageType>('general');
   const [loading, setLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -63,11 +65,15 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
 
     setLoading(true);
     try {
-      // 傳遞收件人姓名 (若未選則為空字串，後端會視為全體)
-      await packageService.addPackage(householdId, barcode, recipientName);
-      triggerToast(`包裹 ${barcode} 已登記至 ${householdId} 戶 ${recipientName ? `(${recipientName})` : ''}`, 'success');
-      setBarcode(''); // 保留戶號和收件人以便批量輸入? 通常保留戶號但不保留收件人比較安全，避免下一個包裹給錯人
-      setRecipientName(''); // Reset recipient
+      // 傳遞收件人姓名及包裹類型
+      await packageService.addPackage(householdId, barcode, recipientName, packageType);
+      
+      const typeText = packageType === 'frozen' ? '冷凍包裹' : packageType === 'letter' ? '信件' : '包裹';
+      triggerToast(`${typeText} ${barcode} 已登記至 ${householdId} 戶 ${recipientName ? `(${recipientName})` : ''}`, 'success');
+      
+      setBarcode(''); 
+      setRecipientName(''); 
+      setPackageType('general'); // Reset type to default
       onPackageAdded();
     } catch (error: any) {
       triggerToast(error.message || '登記失敗，請檢查網路或後端連線', 'error');
@@ -235,6 +241,23 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                 <span>開啟相機</span>
               </button>
             </div>
+          </div>
+
+          {/* Package Type Dropdown */}
+          <div className="space-y-2">
+             <label className="block text-sm font-semibold text-slate-700">包裹類型</label>
+             <div className="relative">
+                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                <select
+                    value={packageType}
+                    onChange={(e) => setPackageType(e.target.value as PackageType)}
+                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white"
+                >
+                    <option value="general">📦 一般包裹</option>
+                    <option value="letter">✉️ 信件 / 掛號</option>
+                    <option value="frozen">🧊 冷凍包裹</option>
+                </select>
+             </div>
           </div>
 
           <div className="pt-4">
