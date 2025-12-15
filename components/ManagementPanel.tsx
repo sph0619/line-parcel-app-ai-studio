@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { PackageItem, User } from '../types';
+import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2 } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, CheckCircle2 } from 'lucide-react';
 
 interface Props {
   packages: PackageItem[];
@@ -51,6 +51,21 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     }
   };
 
+  const handleManualPickup = async (pkgId: string) => {
+    if (!window.confirm('確定要手動領取此包裹嗎？(適用於未攜帶手機之住戶)')) return;
+    
+    setProcessingId(pkgId);
+    try {
+        await packageService.manualPickup(pkgId);
+        triggerToast('手動領取成功', 'success');
+        onUpdate();
+    } catch (e) {
+        triggerToast('操作失敗', 'error');
+    } finally {
+        setProcessingId(null);
+    }
+  };
+
   const handleDeleteUser = async (lineId: string) => {
     if (!window.confirm('確定要解除綁定並刪除此用戶嗎？該用戶將無法再收到 Line 通知。')) return;
 
@@ -80,6 +95,14 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
       u.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [users, searchTerm]);
+
+  const getPackageTypeLabel = (type?: PackageType) => {
+      switch(type) {
+          case 'frozen': return <span className="text-cyan-600 font-medium">🧊 冷凍</span>;
+          case 'letter': return <span className="text-purple-600 font-medium">✉️ 信件</span>;
+          default: return <span className="text-slate-500">📦 一般</span>;
+      }
+  };
 
   return (
     <div className="space-y-6">
@@ -134,6 +157,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                 <tr>
                   <th className="px-6 py-3 font-medium">狀態</th>
+                  <th className="px-6 py-3 font-medium">類型</th>
                   <th className="px-6 py-3 font-medium">戶號</th>
                   <th className="px-6 py-3 font-medium">條碼</th>
                   <th className="px-6 py-3 font-medium">收件人</th>
@@ -150,23 +174,38 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         {pkg.status === 'Pending' ? '待領' : '已領'}
                       </span>
                     </td>
+                    <td className="px-6 py-3">
+                        {getPackageTypeLabel(pkg.packageType)}
+                    </td>
                     <td className="px-6 py-3 font-bold text-slate-700">{pkg.householdId}</td>
                     <td className="px-6 py-3 font-mono text-slate-500">{pkg.barcode}</td>
                     <td className="px-6 py-3 text-slate-600">{pkg.recipientName || '-'}</td>
                     <td className="px-6 py-3 text-right">
-                      <button
-                        onClick={() => handleDeletePackage(pkg.packageId)}
-                        disabled={!!processingId}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="刪除"
-                      >
-                         {processingId === pkg.packageId ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                          {pkg.status === 'Pending' && (
+                              <button
+                                onClick={() => handleManualPickup(pkg.packageId)}
+                                disabled={!!processingId}
+                                className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                title="手動領取"
+                              >
+                                {processingId === pkg.packageId ? <Loader2 size={16} className="animate-spin" /> : <Hand size={16} />}
+                              </button>
+                          )}
+                          <button
+                            onClick={() => handleDeletePackage(pkg.packageId)}
+                            disabled={!!processingId}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="刪除"
+                          >
+                             {processingId === pkg.packageId ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                          </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {filteredPackages.length === 0 && (
-                  <tr><td colSpan={5} className="p-8 text-center text-slate-400">無相關包裹資料</td></tr>
+                  <tr><td colSpan={6} className="p-8 text-center text-slate-400">無相關包裹資料</td></tr>
                 )}
               </tbody>
             </table>
@@ -223,7 +262,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
         <AlertTriangle className="flex-shrink-0" size={20} />
         <div>
           <p className="font-bold">管理員注意</p>
-          <p>刪除操作將直接從 Google Sheet 資料庫中移除該筆資料且無法復原，請謹慎操作。</p>
+          <p>手動領取或刪除操作將直接更新 Google Sheet 資料庫且無法復原，請謹慎操作。</p>
         </div>
       </div>
     </div>
