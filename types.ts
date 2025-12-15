@@ -1,4 +1,6 @@
+
 export type PackageStatus = 'Pending' | 'Picked Up' | 'Expired';
+export type PackageType = 'general' | 'letter' | 'frozen';
 
 export interface PackageItem {
   packageId: string;
@@ -11,6 +13,7 @@ export interface PackageItem {
   pickupOTP?: string;
   signatureDataURL?: string;
   isOverdueNotified: boolean;
+  packageType?: PackageType;
 }
 
 export interface User {
