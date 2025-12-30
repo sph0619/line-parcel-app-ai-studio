@@ -1,325 +1,84 @@
 import { PackageItem, PickupSession, User, PackageType } from '../types';
 
-// Points to the backend server endpoint
 const API_BASE_URL = '/api'; 
 const STORAGE_KEY = 'community_packages_v2_fallback';
 const AUTH_KEY = 'community_auth_token';
 
-// --- MOCK IMPLEMENTATION (Fallback) ---
 const mockService = {
   getPackages: (): PackageItem[] => {
     const data = localStorage.getItem(STORAGE_KEY);
     return data ? JSON.parse(data) : [];
   },
-
-  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
-    await new Promise(resolve => setTimeout(resolve, 600)); 
-    const newPkg: PackageItem = {
-      packageId: `PKG${Date.now()}`,
-      barcode,
-      householdId,
-      recipientName,
-      status: 'Pending',
-      receivedTime: new Date().toISOString(),
-      isOverdueNotified: false,
-      packageType,
-      logisticsCompany
-    };
+  addPackage: async (h: string, b: string, r?: string, t: PackageType = 'general', l: string = ''): Promise<PackageItem> => {
+    const newPkg: PackageItem = { packageId: `PKG${Date.now()}`, barcode: b, householdId: h, recipientName: r, status: 'Pending', receivedTime: new Date().toISOString(), isOverdueNotified: false, packageType: t, logisticsCompany: l };
     const current = mockService.getPackages();
     localStorage.setItem(STORAGE_KEY, JSON.stringify([newPkg, ...current]));
     return newPkg;
   },
-
-  getResidents: async (householdId: string): Promise<string[]> => {
-      if (householdId === '11A1') return ['王小明', '陳大文'];
-      if (householdId === '12B2') return ['林小美'];
-      return [];
-  },
-  
-  verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      if (otp === '8888') {
-          return {
-              user: { name: '王小明', householdId: '11A1' },
-              packages: mockService.getPackages().filter(p => p.householdId === '11A1' && p.status === 'Pending')
-          };
-      }
-      throw new Error('Invalid OTP');
-  },
-
-  confirmBatchPickup: async (packageIds: string[], signature: string): Promise<void> => {
-      await new Promise(resolve => setTimeout(resolve, 800));
+  confirmBatchPickup: async (ids: string[], signature: string, managerCode: string): Promise<void> => {
       const current = mockService.getPackages();
-      const updated = current.map(p => 
-          packageIds.includes(p.packageId) ? {
-              ...p,
-              status: 'Picked Up' as const,
-              pickupTime: new Date().toISOString(),
-              signatureDataURL: signature
-          } : p
-      );
+      const updated = current.map(p => ids.includes(p.packageId) ? { ...p, status: 'Picked Up' as const, pickupTime: new Date().toISOString(), signatureDataURL: signature, managerCode } : p);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   },
-
-  generateOTP: async (packageId: string): Promise<void> => {
-      await new Promise(resolve => setTimeout(resolve, 600));
-      console.log(`[Mock] OTP sent for package ${packageId}`);
-  },
-
-  verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      if (otp !== '8888') throw new Error('Invalid Mock OTP (try 8888)');
-      
-      const current = mockService.getPackages();
-      const updated = current.map(p => 
-          p.packageId === packageId ? {
-              ...p,
-              status: 'Picked Up' as const,
-              pickupTime: new Date().toISOString(),
-              signatureDataURL: signature
-          } : p
-      );
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  },
-
-  getAllUsers: async (): Promise<User[]> => {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return [
-          { lineId: 'mock1', householdId: '11A1', name: '王小明', status: 'APPROVED', joinDate: '2025-01-01' },
-          { lineId: 'mock2', householdId: '12B2', name: '林小美', status: 'APPROVED', joinDate: '2025-02-01' },
-      ];
-  },
-
-  deleteUser: async (lineId: string): Promise<void> => {
-      console.log(`[Mock] Deleted user ${lineId}`);
-      await new Promise(resolve => setTimeout(resolve, 500));
-  },
-
-  deletePackage: async (packageId: string): Promise<void> => {
-      console.log(`[Mock] Deleted package ${packageId}`);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      const current = mockService.getPackages();
-      const updated = current.filter(p => p.packageId !== packageId);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-  },
-
-  manualPickup: async (packageId: string): Promise<void> => {
-    console.log(`[Mock] Manual Pickup ${packageId}`);
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const current = mockService.getPackages();
-    const updated = current.map(p => 
-        p.packageId === packageId ? {
-            ...p,
-            status: 'Picked Up' as const,
-            pickupTime: new Date().toISOString(),
-            signatureDataURL: 'Manual Pickup'
-        } : p
-    );
+  manualPickup: async (id: string): Promise<void> => {
+    const updated = mockService.getPackages().map(p => p.packageId === id ? { ...p, status: 'Picked Up' as const, pickupTime: new Date().toISOString(), signatureDataURL: 'Manual Pickup', managerCode: 'admin' } : p);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   },
-
   login: async (u: string, p: string): Promise<void> => {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (u === 'admin' && p === 'admin') {
-          localStorage.setItem(AUTH_KEY, 'mock_token');
-          return;
-      }
+      if (u === 'admin' && p === 'admin') { localStorage.setItem(AUTH_KEY, 'mock_token'); return; }
       throw new Error('帳號或密碼錯誤');
-  },
-
-  seed: () => {
-    if (localStorage.getItem(STORAGE_KEY)) return;
-    const initialData: PackageItem[] = [
-      {
-        packageId: 'PKG_SEED_1',
-        barcode: 'SF123456789',
-        householdId: '11A1',
-        recipientName: '王小明',
-        status: 'Pending',
-        receivedTime: new Date(Date.now() - 3600000).toISOString(), 
-        isOverdueNotified: false,
-        packageType: 'general',
-        logisticsCompany: '順豐速運'
-      }
-    ];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initialData));
   }
 };
 
-mockService.seed();
-
-// --- HYBRID SERVICE ---
 export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`);
-      if (!response.ok) throw new Error('API Error');
       return await response.json();
-    } catch (e) {
-      console.warn("後端連線失敗，切換至模擬資料模式。", e);
-      return mockService.getPackages();
-    }
+    } catch (e) { return mockService.getPackages(); }
   },
-
   addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
+    const response = await fetch(`${API_BASE_URL}/packages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ householdId, barcode, recipientName, packageType, logisticsCompany }) });
+    if (!response.ok) throw new Error((await response.json()).error || 'API Error');
+    return await response.json();
+  },
+  getResidents: async (id: string): Promise<string[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/packages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ householdId, barcode, recipientName, packageType, logisticsCompany }),
-      });
-      if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'API Error');
-      }
-      return await response.json();
-    } catch (e: any) {
-       console.warn("後端連線失敗或錯誤。", e);
-       throw e; 
-    }
+        const r = await fetch(`${API_BASE_URL}/households/${id}/residents`);
+        return await r.json();
+    } catch (e) { return id === '11A1' ? ['王小明'] : []; }
   },
-
-  getResidents: async (householdId: string): Promise<string[]> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/households/${householdId}/residents`);
-          if (!response.ok) throw new Error('API Error');
-          return await response.json();
-      } catch (e) {
-          return mockService.getResidents(householdId);
-      }
-  },
-
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
+    const response = await fetch(`${API_BASE_URL}/pickup/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp }) });
+    if (!response.ok) throw new Error((await response.json()).error || '驗證失敗');
+    return await response.json();
+  },
+  confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string): Promise<void> => {
     try {
-        const response = await fetch(`${API_BASE_URL}/pickup/verify`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ otp }),
-        });
-        if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error || '驗證失敗');
-        }
-        return await response.json();
-    } catch (e) {
-        if (e instanceof Error && e.message === '驗證失敗') throw e; 
-        console.warn("OTP Check failed, trying mock", e);
-        return mockService.verifyPickupOTP(otp);
+        const response = await fetch(`${API_BASE_URL}/pickup/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode }), });
+        if (!response.ok) throw new Error((await response.json()).error || '提交失敗');
+    } catch (e: any) {
+        if (e.message.includes('承辦人')) throw e;
+        return mockService.confirmBatchPickup(packageIds, signature, managerCode);
     }
   },
-
-  confirmBatchPickup: async (packageIds: string[], signature: string): Promise<void> => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/pickup/confirm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ packageIds, signatureDataURL: signature }),
-        });
-        if (!response.ok) throw new Error('提交失敗');
-      } catch (e) {
-         return mockService.confirmBatchPickup(packageIds, signature);
-      }
+  generateOTP: async (id: string): Promise<void> => { await fetch(`${API_BASE_URL}/packages/${id}/otp`, { method: 'POST' }); },
+  verifyAndPickup: async (id: string, otp: string, signature: string, managerCode: string): Promise<void> => {
+      const r = await fetch(`${API_BASE_URL}/packages/${id}/pickup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ otp, signatureDataURL: signature, managerCode }) });
+      if (!r.ok) throw new Error('失敗');
   },
-
-  generateOTP: async (packageId: string): Promise<void> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/packages/${packageId}/otp`, {
-             method: 'POST'
-          });
-          if (!response.ok) throw new Error('發送失敗');
-      } catch (e) {
-          console.warn("API fail, using mock", e);
-          return mockService.generateOTP(packageId);
-      }
-  },
-
-  verifyAndPickup: async (packageId: string, otp: string, signature: string): Promise<void> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/packages/${packageId}/pickup`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ otp, signatureDataURL: signature }),
-          });
-          if (!response.ok) {
-               const err = await response.json();
-               throw new Error(err.error || '領取失敗');
-          }
-      } catch (e) {
-          console.warn("API fail, using mock", e);
-          if (e instanceof Error && (e.message.includes('領取失敗') || e.message.includes('無效'))) throw e;
-          return mockService.verifyAndPickup(packageId, otp, signature);
-      }
-  },
-
-  // Management APIs
   getAllUsers: async (): Promise<User[]> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/users`);
-          if (!response.ok) throw new Error('API Error');
-          return await response.json();
-      } catch (e) {
-          console.warn("API fail, using mock", e);
-          return mockService.getAllUsers();
-      }
+      try { const r = await fetch(`${API_BASE_URL}/users`); return await r.json(); }
+      catch (e) { return [{ lineId: 'mock1', householdId: '11A1', name: '王小明', status: 'APPROVED', joinDate: '2025-01-01' }]; }
   },
-
-  deleteUser: async (lineId: string): Promise<void> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/users/${lineId}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error('Delete failed');
-      } catch (e) {
-          console.warn("API fail, using mock", e);
-          return mockService.deleteUser(lineId);
-      }
-  },
-
-  deletePackage: async (packageId: string): Promise<void> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/packages/${packageId}`, { method: 'DELETE' });
-          if (!response.ok) throw new Error('Delete failed');
-      } catch (e) {
-          console.warn("API fail, using mock", e);
-          return mockService.deletePackage(packageId);
-      }
-  },
-
-  manualPickup: async (packageId: string): Promise<void> => {
-    try {
-        const response = await fetch(`${API_BASE_URL}/packages/${packageId}/manual-pickup`, { method: 'POST' });
-        if (!response.ok) throw new Error('Manual pickup failed');
-    } catch (e) {
-        console.warn("API fail, using mock", e);
-        return mockService.manualPickup(packageId);
-    }
-  },
-  
-  // Auth
+  deleteUser: async (id: string): Promise<void> => { await fetch(`${API_BASE_URL}/users/${id}`, { method: 'DELETE' }); },
+  deletePackage: async (id: string): Promise<void> => { await fetch(`${API_BASE_URL}/packages/${id}`, { method: 'DELETE' }); },
+  manualPickup: async (id: string): Promise<void> => { await fetch(`${API_BASE_URL}/packages/${id}/manual-pickup`, { method: 'POST' }); },
   login: async (u: string, p: string): Promise<void> => {
-      try {
-          const response = await fetch(`${API_BASE_URL}/login`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username: u, password: p }),
-          });
-          if (!response.ok) {
-               const err = await response.json();
-               throw new Error(err.error || 'Login failed');
-          }
-          const data = await response.json();
-          localStorage.setItem(AUTH_KEY, data.token);
-      } catch (e) {
-          console.warn("Login API fail, using mock", e);
-          return mockService.login(u, p);
-      }
+      const r = await fetch(`${API_BASE_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+      if (!r.ok) throw new Error('Login failed');
+      localStorage.setItem(AUTH_KEY, (await r.json()).token);
   },
-  
-  isLoggedIn: (): boolean => {
-      return !!localStorage.getItem(AUTH_KEY);
-  },
-
-  logout: () => {
-      localStorage.removeItem(AUTH_KEY);
-  },
-
-  seedData: () => mockService.seed()
+  isLoggedIn: (): boolean => !!localStorage.getItem(AUTH_KEY),
+  logout: () => { localStorage.removeItem(AUTH_KEY); }
 };
