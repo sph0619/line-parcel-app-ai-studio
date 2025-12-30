@@ -112,7 +112,7 @@ async function checkAndSeedAdmin() {
   }
 }
 
-// Run admin check on startup (Note: In serverless, this runs on every cold start)
+// Run admin check on startup
 checkAndSeedAdmin();
 
 // --- Helper: Find Line User IDs ---
@@ -184,8 +184,6 @@ async function handleLineEvent(event) {
   const userMessage = event.message.text.trim();
   const userId = event.source.userId;
 
-  // 0. Specific Menu Action for Registration Help (New Feature)
-  // 此處處理當用戶點擊圖文選單「綁定住戶」時的自動回覆
   if (userMessage === '綁定住戶' || userMessage === '綁定') {
     return lineClient.replyMessage(event.replyToken, {
       type: 'text',
@@ -193,7 +191,6 @@ async function handleLineEvent(event) {
     });
   }
 
-  // 1. Handle Registration (Actual Logic)
   if (userMessage.startsWith('綁定') || userMessage.toLowerCase().startsWith('reg')) {
     const parts = userMessage.split(/\s+/); 
     if (parts.length < 3) {
@@ -228,12 +225,10 @@ async function handleLineEvent(event) {
     });
   }
 
-  // 2. Handle Pickup Request
   if (['領取', 'pickup', '取件'].includes(userMessage.toLowerCase())) {
       return handleUserPickupRequest(event, userId);
   }
 
-  // 3. Handle Check Request
   if (['查詢', '查詢包裹', 'check', 'query'].includes(userMessage.toLowerCase())) {
       return handleUserQueryPackages(event, userId);
   }
@@ -258,8 +253,8 @@ async function handleUserQueryPackages(event, userId) {
             return lineClient.replyMessage(event.replyToken, { type: 'text', text: '您尚未綁定戶號，請先輸入「綁定 戶號 姓名」' });
         }
         const householdId = user[1];
-        // Updated range to K to include package type
-        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:K' });
+        // Updated range to L (index 11) for logisticsCompany
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:L' });
         const pkgRows = pkgResp.data.values || [];
         const pendingPkgs = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending');
 
@@ -273,10 +268,11 @@ async function handleUserQueryPackages(event, userId) {
             const dateStr = `${(date.getMonth()+1)}/${date.getDate()}`;
             const recipient = pkg[9] ? `(${pkg[9]})` : '';
             const typeMap = { 'frozen': '🧊 冷凍', 'letter': '✉️ 信件', 'general': '📦 一般' };
-            const typeStr = pkg[10] ? (typeMap[pkg[10]] || '') : ''; // Col K is index 10
+            const typeStr = pkg[10] ? (typeMap[pkg[10]] || '') : ''; 
+            const logistics = pkg[11] ? `[${pkg[11]}]` : ''; // Col L is index 11
             const shortCode = barcode.length > 5 ? `...${barcode.slice(-5)}` : barcode;
             
-            replyText += `\n${index + 1}. [${dateStr}] ${typeStr} ${shortCode} ${recipient}`;
+            replyText += `\n${index + 1}. [${dateStr}] ${typeStr} ${logistics} ${shortCode} ${recipient}`;
         });
         replyText += `\n\n輸入「領取」可獲取驗證碼。`;
         return lineClient.replyMessage(event.replyToken, { type: 'text', text: replyText });
@@ -338,17 +334,18 @@ async function registerLineUser(lineUserId, householdId, name) {
     }
 }
 
-async function notifyUser(householdId, barcode, recipientName = null, packageType = 'general') {
+async function notifyUser(householdId, barcode, recipientName = null, packageType = 'general', logisticsCompany = '') {
   if (!lineClient) return;
   const uniqueUsers = await getLineUsersByHousehold(householdId, recipientName);
   
   const typeMap = { 'frozen': '🧊 冷凍包裹', 'letter': '✉️ 信件/掛號', 'general': '📦 一般包裹' };
   const typeText = typeMap[packageType] || '📦 包裹';
+  const logisticsText = logisticsCompany ? `\n物流：${logisticsCompany}` : '';
 
   if (uniqueUsers.length > 0) {
     const message = {
       type: 'text',
-      text: `${typeText}到貨通知！\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快輸入「領取」以獲取驗證碼。`
+      text: `${typeText}到貨通知！\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}${logisticsText}\n條碼：${barcode}\n時間：${new Date().toLocaleString('zh-TW', {hour12: false})}\n\n請盡快輸入「領取」以獲取驗證碼。`
     };
     await Promise.all(uniqueUsers.map(uid => lineClient.pushMessage(uid, message)));
   }
@@ -434,8 +431,8 @@ app.get('/api/packages', async (req, res) => {
     const auth = await getAuthClient();
     if (!auth) throw new Error("No Credentials");
     const sheets = google.sheets({ version: 'v4', auth });
-    // Update range to K to include packageType
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:K' });
+    // Update range to L (index 11) for logisticsCompany
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:L' });
     const rows = response.data.values;
     if (!rows || rows.length === 0) return res.json([]);
     const packages = rows.slice(1).map(row => ({
@@ -449,7 +446,8 @@ app.get('/api/packages', async (req, res) => {
       signatureDataURL: row[7], 
       isOverdueNotified: row[8] === 'TRUE', 
       recipientName: row[9] || '',
-      packageType: row[10] || 'general' // New field
+      packageType: row[10] || 'general',
+      logisticsCompany: row[11] || '' // New field
     })).reverse();
     res.json(packages);
   } catch (error) {
@@ -459,7 +457,7 @@ app.get('/api/packages', async (req, res) => {
 });
 
 app.post('/api/packages', async (req, res) => {
-  const { householdId, barcode, recipientName, packageType = 'general' } = req.body;
+  const { householdId, barcode, recipientName, packageType = 'general', logisticsCompany = '' } = req.body;
   if (!validateHouseholdId(householdId)) {
     return res.status(400).json({ error: "戶號格式錯誤。請確認：樓層3-19、棟別A/B/C、門牌1-4。" });
   }
@@ -472,13 +470,13 @@ app.post('/api/packages', async (req, res) => {
     const isDuplicate = existingRows.some(row => row[0] === barcode && row[2] === 'Pending');
     if (isDuplicate) return res.status(400).json({ error: "此條碼已存在且尚未被領取，無法重複登錄。" });
     
-    // Append packageType at the end
-    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || '', packageType];
+    // Append fields in order: ID, Barcode, Household, Status, Time, PickupTime, OTP, Sign, Overdue, Recipient, Type, Logistics
+    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany];
     
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     
     try {
-        await notifyUser(householdId, barcode, recipientName, packageType);
+        await notifyUser(householdId, barcode, recipientName, packageType, logisticsCompany);
     } catch (err) {
         console.error("Notify Error (Non-blocking):", err);
     }
@@ -490,15 +488,12 @@ app.post('/api/packages', async (req, res) => {
   }
 });
 
-// New Endpoint: Manual Pickup (Admin Override)
 app.post('/api/packages/:id/manual-pickup', async (req, res) => {
     const packageId = req.params.id;
     try {
         const auth = await getAuthClient();
         if (!auth) throw new Error("No Credentials");
         const sheets = google.sheets({ version: 'v4', auth });
-        
-        // Find package row index
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const rows = response.data.values || [];
         const rowIndex = rows.findIndex(r => r[0] === packageId);
@@ -509,7 +504,6 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const now = new Date().toISOString();
         const adminNote = "Manual Pickup (Admin)";
 
-        // Update Status (D), PickupTime (F), Signature (H) to note
         await sheets.spreadsheets.values.batchUpdate({ 
             spreadsheetId: process.env.GOOGLE_SHEET_ID, 
             requestBody: { 
@@ -566,10 +560,10 @@ app.post('/api/pickup/verify', async (req, res) => {
         if (!user) return res.status(400).json({ error: "驗證碼無效或已過期" });
         const householdId = user[1];
         const userName = user[2];
-        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:K' });
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:L' });
         const pkgRows = pkgResp.data.values || [];
         const pendingPackages = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending').map(row => ({
-                packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], recipientName: row[9] || '', packageType: row[10] || 'general'
+                packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || ''
             }));
         if (pendingPackages.length === 0) return res.status(400).json({ error: "該住戶目前無待領包裹" });
         res.json({ user: { name: userName, householdId: householdId }, packages: pendingPackages });
