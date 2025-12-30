@@ -1,4 +1,3 @@
-
 export type PackageStatus = 'Pending' | 'Picked Up' | 'Expired';
 export type PackageType = 'general' | 'letter' | 'frozen';
 
@@ -14,6 +13,7 @@ export interface PackageItem {
   signatureDataURL?: string;
   isOverdueNotified: boolean;
   packageType?: PackageType;
+  logisticsCompany?: string; // New field
 }
 
 export interface User {
