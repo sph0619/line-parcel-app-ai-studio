@@ -12,7 +12,7 @@ const mockService = {
     return data ? JSON.parse(data) : [];
   },
 
-  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general'): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
     await new Promise(resolve => setTimeout(resolve, 600)); 
     const newPkg: PackageItem = {
       packageId: `PKG${Date.now()}`,
@@ -22,7 +22,8 @@ const mockService = {
       status: 'Pending',
       receivedTime: new Date().toISOString(),
       isOverdueNotified: false,
-      packageType
+      packageType,
+      logisticsCompany
     };
     const current = mockService.getPackages();
     localStorage.setItem(STORAGE_KEY, JSON.stringify([newPkg, ...current]));
@@ -137,7 +138,8 @@ const mockService = {
         status: 'Pending',
         receivedTime: new Date(Date.now() - 3600000).toISOString(), 
         isOverdueNotified: false,
-        packageType: 'general'
+        packageType: 'general',
+        logisticsCompany: '順豐速運'
       }
     ];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(initialData));
@@ -159,12 +161,12 @@ export const packageService = {
     }
   },
 
-  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general'): Promise<PackageItem> => {
+  addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ householdId, barcode, recipientName, packageType }),
+        body: JSON.stringify({ householdId, barcode, recipientName, packageType, logisticsCompany }),
       });
       if (!response.ok) {
         const err = await response.json();
