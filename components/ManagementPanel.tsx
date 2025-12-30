@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, CheckCircle2 } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Truck } from 'lucide-react';
 
 interface Props {
   packages: PackageItem[];
@@ -43,7 +43,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     try {
       await packageService.deletePackage(pkgId);
       triggerToast('包裹已刪除', 'success');
-      onUpdate(); // Refresh parent data
+      onUpdate(); 
     } catch (e) {
       triggerToast('刪除失敗', 'error');
     } finally {
@@ -81,11 +81,11 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     }
   };
 
-  // Filter Logic
   const filteredPackages = useMemo(() => {
     return packages.filter(p => 
       p.householdId.includes(searchTerm.toUpperCase()) || 
-      p.barcode.toLowerCase().includes(searchTerm.toLowerCase())
+      p.barcode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.logisticsCompany && p.logisticsCompany.includes(searchTerm))
     );
   }, [packages, searchTerm]);
 
@@ -138,7 +138,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
           <input
             type="text"
-            placeholder={activeTab === 'PACKAGES' ? "搜尋條碼或戶號..." : "搜尋姓名或戶號..."}
+            placeholder={activeTab === 'PACKAGES' ? "搜尋條碼、戶號或物流公司..." : "搜尋姓名或戶號..."}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border-none outline-none text-slate-700 bg-transparent"
@@ -158,6 +158,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 <tr>
                   <th className="px-6 py-3 font-medium">狀態</th>
                   <th className="px-6 py-3 font-medium">類型</th>
+                  <th className="px-6 py-3 font-medium">物流公司</th>
                   <th className="px-6 py-3 font-medium">戶號</th>
                   <th className="px-6 py-3 font-medium">條碼</th>
                   <th className="px-6 py-3 font-medium">收件人</th>
@@ -176,6 +177,9 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     </td>
                     <td className="px-6 py-3">
                         {getPackageTypeLabel(pkg.packageType)}
+                    </td>
+                    <td className="px-6 py-3 font-medium text-slate-600">
+                        {pkg.logisticsCompany || <span className="text-slate-300 text-xs">未指定</span>}
                     </td>
                     <td className="px-6 py-3 font-bold text-slate-700">{pkg.householdId}</td>
                     <td className="px-6 py-3 font-mono text-slate-500">{pkg.barcode}</td>
@@ -205,7 +209,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                   </tr>
                 ))}
                 {filteredPackages.length === 0 && (
-                  <tr><td colSpan={6} className="p-8 text-center text-slate-400">無相關包裹資料</td></tr>
+                  <tr><td colSpan={7} className="p-8 text-center text-slate-400">無相關包裹資料</td></tr>
                 )}
               </tbody>
             </table>
