@@ -13,7 +13,8 @@ export interface PackageItem {
   signatureDataURL?: string;
   isOverdueNotified: boolean;
   packageType?: PackageType;
-  logisticsCompany?: string; // New field
+  logisticsCompany?: string;
+  managerCode?: string; // New field for trackability
 }
 
 export interface User {
@@ -34,7 +35,6 @@ export interface PickupSession {
 
 export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management';
 
-// For Stats
 export interface DailyStat {
   date: string;
   count: number;
