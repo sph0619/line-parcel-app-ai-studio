@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag } from 'lucide-react';
+import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag, Truck } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -9,6 +9,16 @@ interface Props {
   onPackageAdded: () => void;
 }
 
+const LOGISTICS_COMPANIES = [
+  '黑貓宅急便',
+  '新竹物流',
+  '宅配通',
+  '嘉里大榮',
+  '中華郵政',
+  '順豐速運',
+  '其他'
+];
+
 export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [householdId, setHouseholdId] = useState('');
   const [recipientName, setRecipientName] = useState('');
@@ -17,6 +27,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   
   const [barcode, setBarcode] = useState('');
   const [packageType, setPackageType] = useState<PackageType>('general');
+  const [logisticsCompany, setLogisticsCompany] = useState('');
   const [loading, setLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -47,7 +58,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
           }
       };
 
-      // Simple debounce
       const timeoutId = setTimeout(fetchResidents, 500);
       return () => clearTimeout(timeoutId);
   }, [householdId]);
@@ -65,15 +75,15 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
 
     setLoading(true);
     try {
-      // 傳遞收件人姓名及包裹類型
-      await packageService.addPackage(householdId, barcode, recipientName, packageType);
+      await packageService.addPackage(householdId, barcode, recipientName, packageType, logisticsCompany);
       
       const typeText = packageType === 'frozen' ? '冷凍包裹' : packageType === 'letter' ? '信件' : '包裹';
       triggerToast(`${typeText} ${barcode} 已登記至 ${householdId} 戶 ${recipientName ? `(${recipientName})` : ''}`, 'success');
       
       setBarcode(''); 
       setRecipientName(''); 
-      setPackageType('general'); // Reset type to default
+      setPackageType('general');
+      setLogisticsCompany('');
       onPackageAdded();
     } catch (error: any) {
       triggerToast(error.message || '登記失敗，請檢查網路或後端連線', 'error');
@@ -82,19 +92,17 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     }
   };
 
-  // 啟動掃描器
   useEffect(() => {
     let html5QrCode: Html5Qrcode | null = null;
 
     if (isScanning) {
       const startScanning = async () => {
         try {
-            // 明確指定支援的格式，針對包裹條碼優化
             const formatsToSupport = [
                 Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.CODE_128, // 常見物流條碼
-                Html5QrcodeSupportedFormats.CODE_39,  // 常見物流條碼
-                Html5QrcodeSupportedFormats.EAN_13,   // 商品條碼
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.EAN_13,
                 Html5QrcodeSupportedFormats.UPC_A,
                 Html5QrcodeSupportedFormats.UPC_E
             ];
@@ -110,20 +118,16 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
             await html5QrCode.start(
                 { facingMode: "environment" },
                 { 
-                  fps: 25, // 提高 FPS 增加靈敏度
-                  // 設定為長方形掃描框，更適合長條形的一維條碼
+                  fps: 25,
                   qrbox: { width: 300, height: 150 }, 
                   aspectRatio: 1.0
                 },
                 (decodedText) => {
-                    // Success callback
                     setBarcode(decodedText);
                     triggerToast('掃描成功', 'success');
                     setIsScanning(false);
                 },
-                (errorMessage) => {
-                    // Error callback (ignore frequent errors)
-                }
+                (errorMessage) => {}
             );
         } catch (err) {
             console.error("Camera start failed", err);
@@ -135,7 +139,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
       startScanning();
     }
 
-    // Cleanup function
     return () => {
         if (html5QrCode && html5QrCode.isScanning) {
             html5QrCode.stop().then(() => {
@@ -194,7 +197,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
             )}
           </div>
 
-          {/* Recipient Dropdown */}
           <div className="space-y-2 transition-opacity duration-300">
              <label className="block text-sm font-semibold text-slate-700 flex justify-between">
                 <span>指定收件人 (選填)</span>
@@ -213,9 +215,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                         <option key={idx} value={name}>{name}</option>
                     ))}
                 </select>
-                {residentList.length === 0 && householdId && !errorMsg && !fetchingResidents && (
-                    <p className="text-xs text-amber-500 mt-1 ml-1">注意：該戶號尚未有綁定住戶，將無法發送 Line 通知。</p>
-                )}
              </div>
           </div>
 
@@ -243,21 +242,39 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
             </div>
           </div>
 
-          {/* Package Type Dropdown */}
-          <div className="space-y-2">
-             <label className="block text-sm font-semibold text-slate-700">包裹類型</label>
-             <div className="relative">
-                <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                <select
-                    value={packageType}
-                    onChange={(e) => setPackageType(e.target.value as PackageType)}
-                    className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white"
-                >
-                    <option value="general">📦 一般包裹</option>
-                    <option value="letter">✉️ 信件 / 掛號</option>
-                    <option value="frozen">🧊 冷凍包裹</option>
-                </select>
-             </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                 <label className="block text-sm font-semibold text-slate-700">包裹類型</label>
+                 <div className="relative">
+                    <Tag className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                    <select
+                        value={packageType}
+                        onChange={(e) => setPackageType(e.target.value as PackageType)}
+                        className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white"
+                    >
+                        <option value="general">📦 一般包裹</option>
+                        <option value="letter">✉️ 信件 / 掛號</option>
+                        <option value="frozen">🧊 冷凍包裹</option>
+                    </select>
+                 </div>
+              </div>
+
+              <div className="space-y-2">
+                 <label className="block text-sm font-semibold text-slate-700">物流公司</label>
+                 <div className="relative">
+                    <Truck className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+                    <select
+                        value={logisticsCompany}
+                        onChange={(e) => setLogisticsCompany(e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all appearance-none bg-white"
+                    >
+                        <option value="">-- 未指定 --</option>
+                        {LOGISTICS_COMPANIES.map(company => (
+                            <option key={company} value={company}>{company}</option>
+                        ))}
+                    </select>
+                 </div>
+              </div>
           </div>
 
           <div className="pt-4">
@@ -281,7 +298,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
           </div>
         </form>
 
-        {/* Camera Overlay Modal */}
         {isScanning && (
             <div className="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center">
                 <div className="relative w-full max-w-sm px-4">
@@ -309,7 +325,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
         <h4 className="font-semibold text-blue-800 text-sm mb-2">系統自動化動作:</h4>
         <ul className="text-sm text-blue-600 space-y-1 list-disc list-inside">
           <li>驗證戶號是否已註冊 Line 帳號</li>
-          <li>立即發送 Line 到貨通知給住戶 (指定收件人)</li>
+          <li>立即發送 Line 到貨通知給住戶 (包含物流資訊)</li>
           <li>記錄入庫時間以利追蹤逾期包裹</li>
         </ul>
       </div>
