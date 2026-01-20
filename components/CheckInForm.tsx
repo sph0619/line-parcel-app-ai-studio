@@ -38,6 +38,13 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     return regex.test(id);
   };
 
+  // 攔截 Enter 鍵以防止掃描器自動提交
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+    }
+  };
+
   // 當戶號變更且格式正確時，抓取住戶名單
   useEffect(() => {
       const fetchResidents = async () => {
@@ -171,6 +178,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
               <input
                 type="text"
                 value={householdId}
+                onKeyDown={handleKeyDown}
                 onChange={(e) => {
                     const val = e.target.value.toUpperCase();
                     setHouseholdId(val);
@@ -226,6 +234,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                 <input
                   type="text"
                   value={barcode}
+                  onKeyDown={handleKeyDown}
                   onChange={(e) => setBarcode(e.target.value)}
                   placeholder="掃描或手動輸入條碼"
                   className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all font-mono"
