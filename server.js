@@ -334,6 +334,40 @@ app.post('/api/packages', async (req, res) => {
   } catch (error) { res.status(500).end(); }
 });
 
+app.delete('/api/packages/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
+        const rowIndex = (response.data.values || []).findIndex(r => r[0] === id);
+        if (rowIndex === -1) return res.status(404).json({ error: "Package not found" });
+        
+        const sheetId = await getSheetId(sheets, process.env.GOOGLE_SHEET_ID, 'Packages');
+        if (sheetId === null) return res.status(500).json({ error: "Could not find Packages sheet" });
+
+        await sheets.spreadsheets.batchUpdate({ 
+            spreadsheetId: process.env.GOOGLE_SHEET_ID, 
+            requestBody: { 
+                requests: [{ 
+                    deleteDimension: { 
+                        range: { 
+                            sheetId, 
+                            dimension: 'ROWS', 
+                            startIndex: rowIndex, 
+                            endIndex: rowIndex + 1 
+                        } 
+                    } 
+                }] 
+            } 
+        });
+        res.json({ success: true });
+    } catch (error) { 
+        console.error("Delete Package Error:", error);
+        res.status(500).end(); 
+    }
+});
+
 app.post('/api/packages/:id/manual-pickup', async (req, res) => {
     try {
         const auth = await getAuthClient();
