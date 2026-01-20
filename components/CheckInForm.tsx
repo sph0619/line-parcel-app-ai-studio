@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag, Truck } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
@@ -32,9 +32,9 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [isScanning, setIsScanning] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // 驗證戶號規則
+  // 驗證戶號規則: 3-19樓 + 棟別A/C(1-3房) 或 棟別B(1,2,3,5房)
   const validateHouseholdId = (id: string) => {
-    const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1-4])$/;
+    const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1235])$/;
     return regex.test(id);
   };
 
@@ -44,6 +44,67 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
       e.preventDefault();
     }
   };
+
+  // --- Barcode Scanner Global Listener ---
+  // This logic detects hardware barcode scanners that act as rapid keyboard inputs
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ignore functional keys except Enter
+      if (e.key.length > 1 && e.key !== 'Enter') return;
+
+      const currentTime = Date.now();
+      const timeDiff = currentTime - lastKeyTime;
+      lastKeyTime = currentTime;
+
+      // Typical scanners are extremely fast (often < 20ms between chars)
+      const isFastInput = timeDiff < 35;
+
+      if (e.key === 'Enter') {
+        if (buffer.length > 2) {
+          setBarcode(buffer);
+          triggerToast(`自動填入條碼: ${buffer}`, 'success');
+          buffer = '';
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        buffer = '';
+        return;
+      }
+
+      // If keys are arriving fast, it's likely a scanner
+      if (isFastInput || buffer.length > 0) {
+        if (isFastInput) {
+          // Detect active element to prevent input into other fields
+          const active = document.activeElement;
+          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+            // Prevent the key from reaching the currently focused element
+            e.preventDefault();
+          }
+          buffer += e.key;
+        } else {
+          // First character of a potential scan burst
+          buffer = e.key;
+          
+          // Small delay to check if the NEXT char is fast
+          setTimeout(() => {
+              if (Date.now() - lastKeyTime > 50 && buffer.length === 1) {
+                  // If it was just a slow single key, reset buffer
+                  buffer = '';
+              }
+          }, 40);
+        }
+      } else {
+        buffer = '';
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, []);
 
   // 當戶號變更且格式正確時，抓取住戶名單
   useEffect(() => {
@@ -76,7 +137,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     if (!householdId || !barcode) return;
 
     if (!validateHouseholdId(householdId)) {
-        setErrorMsg('戶號格式錯誤 (規則: 3-19樓 + 棟別A/B/C + 門牌)');
+        setErrorMsg('戶號格式錯誤 (規則: 3-19樓 + A/C棟1-3房 或 B棟1,2,3,5房)');
         return;
     }
 
@@ -183,7 +244,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                     const val = e.target.value.toUpperCase();
                     setHouseholdId(val);
                     if (val && !validateHouseholdId(val)) {
-                        setErrorMsg('格式範例: 11A1 (3-19樓, A/B/C棟)');
+                        setErrorMsg('格式範例: 11A1 (3-19樓, A/C棟1-3房, B棟1/2/3/5房)');
                     } else {
                         setErrorMsg('');
                     }
@@ -201,7 +262,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                     {errorMsg}
                 </div>
             ) : (
-                <p className="text-xs text-slate-500">格式：樓層(3-19) + 棟別(A,B,C) + 門牌(1-4)</p>
+                <p className="text-xs text-slate-500">格式：樓層(3-19) + 棟別(A,B,C) + 門牌(1-5, B棟不含4號)</p>
             )}
           </div>
 
@@ -334,6 +395,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
         <h4 className="font-semibold text-blue-800 text-sm mb-2">系統自動化動作:</h4>
         <ul className="text-sm text-blue-600 space-y-1 list-disc list-inside">
           <li>驗證戶號是否已註冊 Line 帳號</li>
+          <li>支援硬體掃描器，無需點選欄位即可自動填入</li>
           <li>立即發送 Line 到貨通知給住戶 (包含物流資訊)</li>
           <li>記錄入庫時間以利追蹤逾期包裹</li>
         </ul>
