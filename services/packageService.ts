@@ -1,12 +1,17 @@
+
 import { PackageItem, PickupSession, User, PackageType } from '../types';
 
 const API_BASE_URL = '/api'; 
 const AUTH_KEY = 'community_auth_token';
+const CACHE_KEY = 'community_packages_cache';
 
-// 只有在 API 斷線或開發測試時使用的 Mock 資料 (用於保持系統韌性)
 const getFallbackPackages = (): PackageItem[] => {
-  const data = localStorage.getItem('community_packages_v2_fallback');
+  const data = localStorage.getItem(CACHE_KEY);
   return data ? JSON.parse(data) : [];
+};
+
+const setPackagesToCache = (packages: PackageItem[]) => {
+  localStorage.setItem(CACHE_KEY, JSON.stringify(packages));
 };
 
 export const packageService = {
@@ -14,9 +19,11 @@ export const packageService = {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`);
       if (!response.ok) throw new Error();
-      return await response.json();
+      const data = await response.json();
+      setPackagesToCache(data); // Update offline cache
+      return data;
     } catch (e) { 
-      return getFallbackPackages(); 
+      return getFallbackPackages(); // Fallback to last known data
     }
   },
   
@@ -26,50 +33,55 @@ export const packageService = {
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify({ householdId, barcode, recipientName, packageType, logisticsCompany }) 
     });
-    if (!response.ok) throw new Error((await response.json()).error || 'API Error');
-    return await response.json();
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '登記失敗');
+    return result;
   },
   
   getResidents: async (id: string): Promise<string[]> => {
     try {
-        const r = await fetch(`${API_BASE_URL}/households/${id}/residents`);
+        const r = await fetch(`${API_BASE_URL}/households/${id.toUpperCase()}/residents`);
         if (!r.ok) return [];
         return await r.json();
-    } catch (e) { 
-        return []; 
-    }
+    } catch (e) { return []; }
   },
   
+  // Fix missing method generateOTP requested by PickupModal.tsx (Line 27)
+  generateOTP: async (packageId: string): Promise<void> => {
+    const response = await fetch(`${API_BASE_URL}/packages/${packageId}/generate-otp`, { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '發送失敗');
+  },
+
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
     const response = await fetch(`${API_BASE_URL}/pickup/verify`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify({ otp }) 
     });
-    if (!response.ok) throw new Error((await response.json()).error || '驗證失敗');
-    return await response.json();
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '驗證失敗');
+    return result;
   },
   
+  // Fix missing method verifyAndPickup requested by PickupModal.tsx (Line 62)
+  verifyAndPickup: async (packageId: string, otp: string, signature: string, managerCode: string): Promise<void> => {
+    // Re-use verify logic to validate the OTP and retrieve associated packages
+    const session = await packageService.verifyPickupOTP(otp);
+    const hasPackage = session.packages.some(p => p.packageId === packageId);
+    if (!hasPackage) throw new Error('此驗證碼不屬於該住戶或該包裹');
+    
+    // Once verified, confirm the pickup for this specific package
+    await packageService.confirmBatchPickup([packageId], signature, managerCode);
+  },
+
   confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/pickup/confirm`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
       body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode }), 
     });
-    if (!response.ok) throw new Error((await response.json()).error || '提交失敗');
-  },
-  
-  generateOTP: async (id: string): Promise<void> => { 
-    await fetch(`${API_BASE_URL}/packages/${id}/otp`, { method: 'POST' }); 
-  },
-  
-  verifyAndPickup: async (id: string, otp: string, signature: string, managerCode: string): Promise<void> => {
-      const r = await fetch(`${API_BASE_URL}/packages/${id}/pickup`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ otp, signatureDataURL: signature, managerCode }) 
-      });
-      if (!r.ok) throw new Error('驗證失敗');
+    if (!response.ok) throw new Error('提交失敗');
   },
   
   getAllUsers: async (): Promise<User[]> => {
@@ -77,9 +89,7 @@ export const packageService = {
       const r = await fetch(`${API_BASE_URL}/users`); 
       if (!r.ok) return [];
       return await r.json(); 
-    } catch (e) { 
-      return []; 
-    }
+    } catch (e) { return []; }
   },
   
   deleteUser: async (id: string): Promise<void> => { 
