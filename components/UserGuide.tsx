@@ -125,7 +125,7 @@ export const UserGuide: React.FC = () => {
         </div>
         <div className="flex-shrink-0 bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/10 text-center print:border-slate-200">
            <p className="text-xs text-blue-300 font-bold mb-1">技術支援</p>
-           <p className="font-mono text-sm">XX 物業管理公司</p>
+           <p className="font-mono text-sm">HusPlay</p>
         </div>
       </div>
     </div>
