@@ -33,7 +33,7 @@ export interface PickupSession {
   packages: PackageItem[];
 }
 
-export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management';
+export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management' | 'guide';
 
 export interface DailyStat {
   date: string;
