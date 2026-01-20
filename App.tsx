@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings, LogOut } from 'lucide-react';
+import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings, LogOut, BookOpen } from 'lucide-react';
 import { CheckInForm } from './components/CheckInForm';
 import { StatsDashboard } from './components/StatsDashboard';
 import { HistoryLog } from './components/HistoryLog';
 import { PickupFlow } from './components/PickupFlow';
 import { ManagementPanel } from './components/ManagementPanel';
 import { LoginForm } from './components/LoginForm';
+import { UserGuide } from './components/UserGuide';
 import { Toaster } from './components/Toaster';
 import { PackageItem, TabType } from './types';
 import { packageService } from './services/packageService';
@@ -23,7 +24,6 @@ export default function App() {
     
     const fetchData = async () => {
       try {
-        // Fetch packages and users in parallel
         const [pkgData, userData] = await Promise.all([
           packageService.getPackages(),
           packageService.getAllUsers()
@@ -59,6 +59,8 @@ export default function App() {
         return <HistoryLog packages={packages} />;
       case 'management':
         return <ManagementPanel packages={packages} onUpdate={refreshData} />;
+      case 'guide':
+        return <UserGuide />;
       default:
         return <StatsDashboard packages={packages} userCount={userCount} />;
     }
@@ -71,6 +73,7 @@ export default function App() {
       case 'pickup': return '領取作業';
       case 'history': return '歷史紀錄';
       case 'management': return '資料管理';
+      case 'guide': return '使用手冊';
       default: return '系統總覽';
     }
   };
@@ -87,7 +90,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col md:flex-row text-slate-800 font-[Inter]">
       {/* Sidebar Navigation */}
-      <aside className="bg-slate-900 text-white w-full md:w-64 flex-shrink-0 transition-all duration-300 flex flex-col">
+      <aside className="bg-slate-900 text-white w-full md:w-64 flex-shrink-0 transition-all duration-300 flex flex-col print:hidden">
         <div className="p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
             <div className="bg-blue-500 p-2 rounded-lg">
@@ -132,6 +135,14 @@ export default function App() {
             icon={<Settings size={20} />} 
             label="資料管理" 
           />
+          <div className="pt-4 mt-4 border-t border-slate-700">
+            <NavButton 
+              active={activeTab === 'guide'} 
+              onClick={() => setActiveTab('guide')} 
+              icon={<BookOpen size={20} />} 
+              label="使用手冊" 
+            />
+          </div>
         </nav>
 
         <div className="p-4 border-t border-slate-700">
@@ -151,8 +162,8 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 bg-gray-50 overflow-y-auto h-screen">
-        <header className="bg-white shadow-sm p-4 md:px-8 flex justify-between items-center sticky top-0 z-10">
+      <main className="flex-1 bg-gray-50 overflow-y-auto h-screen print:h-auto print:bg-white">
+        <header className="bg-white shadow-sm p-4 md:px-8 flex justify-between items-center sticky top-0 z-10 print:hidden">
           <h2 className="text-xl font-bold text-slate-800">
             {getTabTitle(activeTab)}
           </h2>
@@ -167,7 +178,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+        <div className="p-4 md:p-8 max-w-7xl mx-auto print:p-0 print:max-w-none">
           {renderContent()}
         </div>
       </main>
