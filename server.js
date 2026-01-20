@@ -13,29 +13,37 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// --- Validation Logic ---
-function validateHouseholdId(id) {
-  if (!id) return false;
-  const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1-4])$/;
-  return regex.test(id);
-}
-
 // --- Line Bot Configuration ---
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',
   channelSecret: process.env.LINE_CHANNEL_SECRET || '',
 };
 
+// Log configuration status (helpful for debugging in Vercel)
+if (!lineConfig.channelAccessToken || !lineConfig.channelSecret) {
+  console.warn('⚠️ [WARNING] LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_SECRET is missing!');
+}
+
 const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret) 
   ? new Client(lineConfig) 
   : null;
 
+// Middleware for LINE must come BEFORE express.json() for the /callback path
 app.use('/callback', middleware(lineConfig));
+
 app.use(express.json());
 app.use(cors());
 
+// --- Validation Logic ---
+function validateHouseholdId(id) {
+  if (!id) return false;
+  // Floors 3-19, Blocks A/C units 1-3, Block B units 1,2,3,5 (No 4)
+  const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1235])$/;
+  return regex.test(id);
+}
+
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  res.status(200).send('OK - Service is running');
 });
 
 // --- Google Sheets Configuration ---
@@ -43,26 +51,41 @@ const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
 async function getAuthClient() {
   const { GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
-  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) return null;
+  
+  if (!GOOGLE_SERVICE_ACCOUNT_EMAIL || !GOOGLE_PRIVATE_KEY) {
+    console.error('❌ [ERROR] Google Sheets Credentials missing in env!');
+    return null;
+  }
+
   try {
+    // Robust private key parsing for multi-line support in various environments
+    const formattedKey = GOOGLE_PRIVATE_KEY
+      .replace(/\\n/g, '\n')
+      .replace(/"/g, ''); // Remove potential double quotes
+
     const jwt = new google.auth.JWT(
       GOOGLE_SERVICE_ACCOUNT_EMAIL,
       null,
-      GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+      formattedKey,
       SCOPES
     );
     await jwt.authorize();
     return jwt;
   } catch (error) {
-    console.error("Google Auth Error:", error.message);
+    console.error("❌ [ERROR] Google Auth Error:", error.message);
     return null;
   }
 }
 
 async function getSheetId(sheets, spreadsheetId, title) {
-    const meta = await sheets.spreadsheets.get({ spreadsheetId });
-    const sheet = meta.data.sheets.find(s => s.properties.title === title);
-    return sheet ? sheet.properties.sheetId : null;
+    try {
+      const meta = await sheets.spreadsheets.get({ spreadsheetId });
+      const sheet = meta.data.sheets.find(s => s.properties.title === title);
+      return sheet ? sheet.properties.sheetId : null;
+    } catch (e) {
+      console.error(`❌ [ERROR] Could not find sheet with title: ${title}`);
+      return null;
+    }
 }
 
 async function checkAndSeedAdmin() {
@@ -71,6 +94,8 @@ async function checkAndSeedAdmin() {
     if (!auth) return;
     const sheets = google.sheets({ version: 'v4', auth });
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    if (!spreadsheetId) return;
+
     const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'admin!A:B' });
     const rows = response.data.values || [];
     const hasAdmin = rows.some(r => r[0] === 'admin');
@@ -82,51 +107,31 @@ async function checkAndSeedAdmin() {
         requestBody: { values: [['admin', 'admin']] }
       });
     }
-  } catch (error) {}
+  } catch (error) {
+    console.error('❌ [ERROR] checkAndSeedAdmin failed:', error.message);
+  }
 }
 
 checkAndSeedAdmin();
 
-async function getLineUsersByHousehold(householdId, recipientName = null) {
-  try {
-    const auth = await getAuthClient();
-    if (!auth) return [];
-    const sheets = google.sheets({ version: 'v4', auth });
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
-    const rows = response.data.values;
-    if (!rows || rows.length === 0) return [];
-    const targetUsers = rows.filter(row => {
-        const matchHousehold = row[1] === householdId;
-        const matchName = recipientName ? row[2] === recipientName : true;
-        return matchHousehold && matchName;
-    }).map(row => row[0]);
-    return [...new Set(targetUsers)];
-  } catch (error) {
-    console.error("Get Line Users Error:", error);
-    return [];
-  }
-}
-
-function generateUniqueOTP(existingOtps) {
-    let otp;
-    let isUnique = false;
-    let attempts = 0;
-    while (!isUnique && attempts < 10) {
-        otp = Math.floor(1000 + Math.random() * 9000).toString();
-        const collision = existingOtps.some(entry => entry && entry.startsWith(otp + ':'));
-        if (!collision) isUnique = true;
-        attempts++;
-    }
-    return otp;
-}
-
+// --- LINE Webhook Handler ---
 app.post('/callback', async (req, res) => {
-  if (!lineClient) return res.status(500).end();
+  if (!lineClient) {
+    console.error('❌ [ERROR] LINE client not initialized. Check your Environment Variables.');
+    return res.status(500).send('LINE Bot not configured');
+  }
+
   try {
     const events = req.body.events;
+    // LINE Verification sends an empty event list or a special verify event
+    if (!events || events.length === 0) {
+      return res.status(200).send('OK - No events to process');
+    }
+
     await Promise.all(events.map(handleLineEvent));
     res.json({});
   } catch (err) {
+    console.error('❌ [ERROR] Webhook Error:', err);
     res.status(500).end();
   }
 });
@@ -221,6 +226,39 @@ async function notifyUser(householdId, barcode, recipientName = null, packageTyp
   }
 }
 
+function generateUniqueOTP(existingOtps) {
+    let otp;
+    let isUnique = false;
+    let attempts = 0;
+    while (!isUnique && attempts < 10) {
+        otp = Math.floor(1000 + Math.random() * 9000).toString();
+        const collision = existingOtps.some(entry => entry && entry.startsWith(otp + ':'));
+        if (!collision) isUnique = true;
+        attempts++;
+    }
+    return otp;
+}
+
+async function getLineUsersByHousehold(householdId, recipientName = null) {
+  try {
+    const auth = await getAuthClient();
+    if (!auth) return [];
+    const sheets = google.sheets({ version: 'v4', auth });
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
+    const rows = response.data.values;
+    if (!rows || rows.length === 0) return [];
+    const targetUsers = rows.filter(row => {
+        const matchHousehold = row[1] === householdId;
+        const matchName = recipientName ? row[2] === recipientName : true;
+        return matchHousehold && matchName;
+    }).map(row => row[0]);
+    return [...new Set(targetUsers)];
+  } catch (error) {
+    console.error("Get Line Users Error:", error);
+    return [];
+  }
+}
+
 // --- API Routes ---
 
 app.post('/api/login', async (req, res) => {
@@ -275,7 +313,6 @@ app.get('/api/packages', async (req, res) => {
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
-    // Updated range to M (index 12) for managerCode
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
     res.json(rows.slice(1).map(row => ({
@@ -338,7 +375,6 @@ app.post('/api/pickup/confirm', async (req, res) => {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         
-        // 1. Validate Manager Code against admin accounts
         const adminResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'admin!A:A' });
         const admins = adminResp.data.values || [];
         const isValidManager = admins.some(r => r[0] === managerCode);
@@ -356,11 +392,11 @@ app.post('/api/pickup/confirm', async (req, res) => {
                     { range: `Packages!D${sheetRow}`, values: [['Picked Up']] },
                     { range: `Packages!F${sheetRow}`, values: [[now]] },
                     { range: `Packages!H${sheetRow}`, values: [[signatureDataURL]] },
-                    { range: `Packages!M${sheetRow}`, values: [[managerCode]] } // Col M
+                    { range: `Packages!M${sheetRow}`, values: [[managerCode]] } 
                 );
             }
         }
-        await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
 });
@@ -403,5 +439,5 @@ app.post('/api/packages/:id/pickup', async (req, res) => {
 
 export default app;
 if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
+  app.listen(PORT, () => console.log(`🚀 Server is running on port ${PORT}`));
 }
