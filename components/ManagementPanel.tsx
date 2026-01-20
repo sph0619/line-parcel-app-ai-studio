@@ -24,14 +24,8 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
         setLoadingUsers(true);
         try {
           const data = await packageService.getAllUsers();
-          // Safety check: Filter out any potential headers that slipped through
-          const cleaned = data.filter(u => 
-             u.householdId && 
-             u.lineId && 
-             u.householdId !== '戶號' && 
-             u.householdId !== 'Household ID'
-          );
-          setUsers(cleaned);
+          // Data starts from row 1, no need to filter headers like "戶號"
+          setUsers(data);
         } catch (error) {
           triggerToast('無法載入用戶列表', 'error');
         } finally {
