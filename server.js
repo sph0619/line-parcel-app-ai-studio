@@ -122,7 +122,7 @@ async function registerLineUser(lineUserId, householdId, name) {
         const auth = await getAuthClient();
         if (!auth) return { success: false, message: "System Error" };
         const sheets = google.sheets({ version: 'v4', auth });
-        // Check if user already exists to prevent duplicate rows in the sheet
+        // Treat row 0 as data
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A' });
         const rows = response.data.values || [];
         const exists = rows.some(r => r[0] === lineUserId);
@@ -144,7 +144,8 @@ async function handleUserQueryPackages(event, userId) {
         const householdId = user[1];
         const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:L' });
         const pkgRows = pkgResp.data.values || [];
-        const pendingPkgs = pkgRows.slice(1).filter(r => r[2] === householdId && r[3] === 'Pending');
+        // Treat row 0 as data
+        const pendingPkgs = pkgRows.filter(r => r[2] === householdId && r[3] === 'Pending');
         if (pendingPkgs.length === 0) return lineClient.replyMessage(event.replyToken, { type: 'text', text: `目前沒有待領取的包裹。` });
         let replyText = `待領包裹共 ${pendingPkgs.length} 件：\n`;
         pendingPkgs.forEach((pkg, index) => {
@@ -177,8 +178,8 @@ async function notifyUser(householdId, barcode, recipientName = null, packageTyp
   const sheets = google.sheets({ version: 'v4', auth });
   const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
   const rows = response.data.values || [];
-  // Skip header and find users
-  const targetUsers = rows.slice(1).filter(row => row[1] === householdId && (recipientName ? row[2] === recipientName : true)).map(row => row[0]);
+  // Treat row 0 as data
+  const targetUsers = rows.filter(row => row[1] === householdId && (recipientName ? row[2] === recipientName : true)).map(row => row[0]);
   const uniqueUsers = [...new Set(targetUsers)];
   const typeMap = { 'frozen': '🧊 冷凍包裹', 'letter': '✉️ 信件/掛號', 'general': '📦 一般包裹' };
   const message = { type: 'text', text: `${typeMap[packageType] || '📦 包裹'}到貨通知！\n\n戶號：${householdId}\n收件人：${recipientName || '全體'}\n條碼：${barcode}` };
@@ -193,8 +194,8 @@ app.get('/api/users', async (req, res) => {
         const sheets = google.sheets({ version: 'v4', auth });
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
         const rows = response.data.values || [];
-        // CLEANUP: Skip header (row 0) and filter out empty rows
-        const cleanedRows = rows.slice(1).filter(row => row[0] && row[1]);
+        // CLEANUP: Treat row 0 as data
+        const cleanedRows = rows.filter(row => row[0] && row[1]);
         // UNIQUE: Ensure lineId is unique to prevent UI duplication
         const seen = new Set();
         const uniqueUsers = cleanedRows.filter(row => {
@@ -218,8 +219,8 @@ app.get('/api/packages', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
-    // CLEANUP: Skip header and filter empty rows
-    const cleaned = rows.slice(1).filter(row => row[0]);
+    // CLEANUP: Treat row 0 as data
+    const cleaned = rows.filter(row => row[0]);
     res.json(cleaned.map(row => ({
       packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
     })).reverse());
@@ -289,7 +290,7 @@ app.post('/api/pickup/verify', async (req, res) => {
         });
         if (!user) return res.status(400).json({ error: "驗證碼無效或已過期" });
         const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
-        const pending = (pkgResp.data.values || []).slice(1).filter(r => r[2] === user[1] && r[3] === 'Pending').map(row => ({
+        const pending = (pkgResp.data.values || []).filter(r => r[2] === user[1] && r[3] === 'Pending').map(row => ({
             packageId: row[0], barcode: row[1], householdId: row[2], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || ''
         }));
         res.json({ user: { name: user[2], householdId: user[1] }, packages: pending });
@@ -327,7 +328,7 @@ app.get('/api/households/:id/residents', async (req, res) => {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!B:C' });
-        const residents = (response.data.values || []).slice(1).filter(row => row[0] === req.params.id.toUpperCase()).map(row => row[1]);
+        const residents = (response.data.values || []).filter(row => row[0] === req.params.id.toUpperCase()).map(row => row[1]);
         res.json([...new Set(residents)]);
     } catch (error) { res.json([]); }
 });
