@@ -104,6 +104,13 @@ export const packageService = {
     }); 
     if (!response.ok) throw new Error('操作失敗');
   },
+
+  performArchive: async (): Promise<number> => {
+    const response = await fetch(`${API_BASE_URL}/maintenance/archive`, { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '歸檔失敗');
+    return result.count;
+  },
   
   login: async (u: string, p: string): Promise<void> => {
       const r = await fetch(`${API_BASE_URL}/login`, { 
