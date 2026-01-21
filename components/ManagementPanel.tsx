@@ -3,6 +3,7 @@ import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
 import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand } from 'lucide-react';
+import { ManualPickupModal } from './ManualPickupModal';
 
 interface Props {
   packages: PackageItem[];
@@ -17,6 +18,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [selectedPkgForManual, setSelectedPkgForManual] = useState<PackageItem | null>(null);
 
   useEffect(() => {
     if (activeTab === 'USERS') {
@@ -24,7 +26,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
         setLoadingUsers(true);
         try {
           const data = await packageService.getAllUsers();
-          // Data starts from row 1, no need to filter headers like "戶號"
           setUsers(data);
         } catch (error) {
           triggerToast('無法載入用戶列表', 'error');
@@ -47,20 +48,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
       triggerToast('刪除失敗', 'error');
     } finally {
       setProcessingId(null);
-    }
-  };
-
-  const handleManualPickup = async (pkgId: string) => {
-    if (!window.confirm('確定要手動領取此包裹嗎？')) return;
-    setProcessingId(pkgId);
-    try {
-        await packageService.manualPickup(pkgId);
-        triggerToast('手動領取成功', 'success');
-        onUpdate();
-    } catch (e) {
-        triggerToast('操作失敗', 'error');
-    } finally {
-        setProcessingId(null);
     }
   };
 
@@ -96,14 +83,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
       u.name.toUpperCase().includes(term)
     );
   }, [users, searchTerm]);
-
-  const getPackageTypeLabel = (type?: PackageType) => {
-      switch(type) {
-          case 'frozen': return <span className="text-cyan-600 font-medium">🧊 冷凍</span>;
-          case 'letter': return <span className="text-purple-600 font-medium">✉️ 信件</span>;
-          default: return <span className="text-slate-500">📦 一般</span>;
-      }
-  };
 
   return (
     <div className="space-y-6">
@@ -176,8 +155,13 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     <td className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                           {pkg.status === 'Pending' && (
-                              <button onClick={() => handleManualPickup(pkg.packageId)} disabled={!!processingId} className="p-2 text-slate-400 hover:text-emerald-600 rounded-lg">
-                                {processingId === pkg.packageId ? <Loader2 size={16} className="animate-spin" /> : <Hand size={16} />}
+                              <button 
+                                onClick={() => setSelectedPkgForManual(pkg)} 
+                                disabled={!!processingId} 
+                                className="p-2 text-slate-400 hover:text-blue-600 rounded-lg"
+                                title="手動領取流程"
+                              >
+                                <Hand size={16} />
                               </button>
                           )}
                           <button onClick={() => handleDeletePackage(pkg.packageId)} disabled={!!processingId} className="p-2 text-slate-400 hover:text-red-600 rounded-lg">
@@ -230,6 +214,14 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
          <div className="p-12 text-center text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
            找不到相符的{activeTab === 'PACKAGES' ? '包裹' : '住戶'}資料
          </div>
+      )}
+
+      {selectedPkgForManual && (
+          <ManualPickupModal 
+            pkg={selectedPkgForManual} 
+            onClose={() => setSelectedPkgForManual(null)} 
+            onSuccess={onUpdate} 
+          />
       )}
     </div>
   );
