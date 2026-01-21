@@ -1,4 +1,3 @@
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -25,7 +24,7 @@ const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret)
   : null;
 
 app.use('/callback', middleware(lineConfig));
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(cors());
 
 function validateHouseholdId(id) {
@@ -178,8 +177,6 @@ app.post('/api/packages', async (req, res) => {
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
-    
-    // FOOLPROOF: Check for duplicate active package with same barcode
     const existingResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const isDuplicate = (existingResp.data.values || []).some(r => r[0] === barcode && r[2] === 'Pending');
     if (isDuplicate) return res.status(409).json({ error: "此條碼已在待領清單中，請勿重複入庫" });
@@ -191,7 +188,6 @@ app.post('/api/packages', async (req, res) => {
   } catch (error) { res.status(500).json({ error: "伺服器錯誤" }); }
 });
 
-// Fix missing endpoint for OTP generation triggered by management panel (called in PickupModal.tsx via packageService.generateOTP)
 app.post('/api/packages/:id/generate-otp', async (req, res) => {
   try {
     const auth = await getAuthClient();
@@ -199,52 +195,27 @@ app.post('/api/packages/:id/generate-otp', async (req, res) => {
     const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:J' });
     const pkg = (pkgResp.data.values || []).find(r => r[0] === req.params.id);
     if (!pkg) return res.status(404).json({ error: "包裹不存在" });
-    
     const householdId = pkg[2];
     const recipientName = pkg[9];
-    
     const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
     const users = (userResp.data.values || []).filter(r => r[1] === householdId && (recipientName ? r[2] === recipientName : true));
-    
     if (users.length === 0) return res.status(404).json({ error: "找不到該戶號綁定的 Line 帳號" });
-
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
     const expiry = Date.now() + 600000;
-    
     const allUsersResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:E' });
     const allUsers = allUsersResp.data.values || [];
-    
     const updates = [];
     for (const targetUser of users) {
        const uIdx = allUsers.findIndex(r => r[0] === targetUser[0]);
-       if (uIdx !== -1) {
-          updates.push({
-            range: `Users!E${uIdx + 1}`,
-            values: [[`${otp}:${expiry}`]]
-          });
-       }
+       if (uIdx !== -1) { updates.push({ range: `Users!E${uIdx + 1}`, values: [[`${otp}:${expiry}`]] }); }
     }
-    
-    if (updates.length > 0) {
-      await sheets.spreadsheets.batchUpdate({ 
-        spreadsheetId: process.env.GOOGLE_SHEET_ID, 
-        requestBody: { 
-          valueInputOption: 'USER_ENTERED', 
-          data: updates 
-        } 
-      });
-    }
-    
+    if (updates.length > 0) { await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } }); }
     if (lineClient) {
       const message = { type: 'text', text: `🔐 取件驗證碼：【 ${otp} 】\n(10分鐘內有效)` };
       await Promise.all(users.map(u => lineClient.pushMessage(u[0], message)));
     }
-    
     res.json({ success: true });
-  } catch (error) { 
-    console.error("OTP Generation Error:", error);
-    res.status(500).json({ error: "發送失敗" }); 
-  }
+  } catch (error) { res.status(500).json({ error: "發送失敗" }); }
 });
 
 app.post('/api/pickup/verify', async (req, res) => {
@@ -278,12 +249,12 @@ app.post('/api/pickup/confirm', async (req, res) => {
         for (const pid of packageIds) {
             const idx = rows.findIndex(r => r[0] === pid);
             if (idx !== -1) {
-                const row = idx + 1;
+                const rowNum = idx + 1;
                 updates.push(
-                    { range: `Packages!D${row}`, values: [['Picked Up']] },
-                    { range: `Packages!F${row}`, values: [[now]] },
-                    { range: `Packages!H${row}`, values: [[signatureDataURL]] },
-                    { range: `Packages!M${row}`, values: [[managerCode]] } 
+                    { range: `Packages!D${rowNum}`, values: [['Picked Up']] },
+                    { range: `Packages!F${rowNum}`, values: [[now]] },
+                    { range: `Packages!H${rowNum}`, values: [[signatureDataURL]] },
+                    { range: `Packages!M${rowNum}`, values: [[managerCode]] } 
                 );
             }
         }
@@ -314,41 +285,24 @@ app.post('/api/login', async (req, res) => {
   } catch (error) { res.status(500).end(); }
 });
 
-app.delete('/api/users/:lineId', async (req, res) => {
-    try {
-        const auth = await getAuthClient();
-        const sheets = google.sheets({ version: 'v4', auth });
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A' });
-        const idx = (response.data.values || []).findIndex(r => r[0] === req.params.lineId);
-        if (idx === -1) return res.status(404).end();
-        const sheetId = await getSheetId(sheets, spreadsheetId, 'Users');
-        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { requests: [{ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 } } }] } });
-        res.json({ success: true });
-    } catch (error) { res.status(500).end(); }
-});
-
-app.delete('/api/packages/:id', async (req, res) => {
-    try {
-        const auth = await getAuthClient();
-        const sheets = google.sheets({ version: 'v4', auth });
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
-        const idx = (response.data.values || []).findIndex(r => r[0] === req.params.id);
-        if (idx === -1) return res.status(404).end();
-        const sheetId = await getSheetId(sheets, spreadsheetId, 'Packages');
-        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { requests: [{ deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 } } }] } });
-        res.json({ success: true });
-    } catch (error) { res.status(500).end(); }
-});
-
 app.post('/api/packages/:id/manual-pickup', async (req, res) => {
+    const { signatureDataURL, managerCode } = req.body;
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
         if (idx === -1) return res.status(404).end();
-        const row = idx + 1;
-        await sheets.spreadsheets.values.update({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: `Packages!D${row}:H${row}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [['Picked Up', '', '', 'Manual Pickup', '']] } });
+        const rowNum = idx + 1;
+        const now = new Date().toISOString();
+        const updates = [
+            { range: `Packages!D${rowNum}`, values: [['Picked Up']] },
+            { range: `Packages!F${rowNum}`, values: [[now]] },
+            { range: `Packages!G${rowNum}`, values: [['MANUAL']] },
+            { range: `Packages!H${rowNum}`, values: [[signatureDataURL]] },
+            { range: `Packages!M${rowNum}`, values: [[managerCode]] }
+        ];
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
 });
