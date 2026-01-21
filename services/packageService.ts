@@ -1,4 +1,3 @@
-
 import { PackageItem, PickupSession, User, PackageType } from '../types';
 
 const API_BASE_URL = '/api'; 
@@ -20,10 +19,10 @@ export const packageService = {
       const response = await fetch(`${API_BASE_URL}/packages`);
       if (!response.ok) throw new Error();
       const data = await response.json();
-      setPackagesToCache(data); // Update offline cache
+      setPackagesToCache(data); 
       return data;
     } catch (e) { 
-      return getFallbackPackages(); // Fallback to last known data
+      return getFallbackPackages(); 
     }
   },
   
@@ -46,7 +45,6 @@ export const packageService = {
     } catch (e) { return []; }
   },
   
-  // Fix missing method generateOTP requested by PickupModal.tsx (Line 27)
   generateOTP: async (packageId: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/packages/${packageId}/generate-otp`, { method: 'POST' });
     const result = await response.json();
@@ -64,14 +62,10 @@ export const packageService = {
     return result;
   },
   
-  // Fix missing method verifyAndPickup requested by PickupModal.tsx (Line 62)
   verifyAndPickup: async (packageId: string, otp: string, signature: string, managerCode: string): Promise<void> => {
-    // Re-use verify logic to validate the OTP and retrieve associated packages
     const session = await packageService.verifyPickupOTP(otp);
     const hasPackage = session.packages.some(p => p.packageId === packageId);
     if (!hasPackage) throw new Error('此驗證碼不屬於該住戶或該包裹');
-    
-    // Once verified, confirm the pickup for this specific package
     await packageService.confirmBatchPickup([packageId], signature, managerCode);
   },
 
@@ -102,8 +96,12 @@ export const packageService = {
     if (!response.ok) throw new Error('刪除失敗');
   },
   
-  manualPickup: async (id: string): Promise<void> => { 
-    const response = await fetch(`${API_BASE_URL}/packages/${id}/manual-pickup`, { method: 'POST' }); 
+  manualPickup: async (id: string, signature: string, managerCode: string): Promise<void> => { 
+    const response = await fetch(`${API_BASE_URL}/packages/${id}/manual-pickup`, { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signatureDataURL: signature, managerCode })
+    }); 
     if (!response.ok) throw new Error('操作失敗');
   },
   
