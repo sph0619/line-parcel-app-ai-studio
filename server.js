@@ -54,6 +54,25 @@ async function getSheetId(sheets, spreadsheetId, title) {
     } catch (e) { return null; }
 }
 
+// Ensure Archive sheet exists
+async function ensureArchiveSheet(sheets, spreadsheetId) {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const exists = meta.data.sheets.some(s => s.properties.title === 'Archive_Packages');
+    if (!exists) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: [{ addSheet: { properties: { title: 'Archive_Packages' } } }] }
+        });
+        // Header row
+        await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: 'Archive_Packages!A1:M1',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [['pkgId', 'barcode', 'household', 'status', 'received', 'pickup', 'otp', 'sign', 'notified', 'recipient', 'type', 'logistics', 'manager']] }
+        });
+    }
+}
+
 app.post('/callback', async (req, res) => {
   if (!lineClient) return res.status(500).send('LINE Bot not configured');
   try {
@@ -160,7 +179,7 @@ app.get('/api/packages', async (req, res) => {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
-    const cleaned = (response.data.values || []).filter(row => row[0]);
+    const cleaned = (response.data.values || []).filter(row => row[0] && row[0] !== 'pkgId');
     res.json(cleaned.map(row => ({
       packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
     })).reverse());
@@ -292,7 +311,7 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const sheets = google.sheets({ version: 'v4', auth });
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
-        if (idx === -1) return res.status(404).end();
+        if (idx !== -1) return res.status(404).end();
         const rowNum = idx + 1;
         const now = new Date().toISOString();
         const updates = [
@@ -305,6 +324,67 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
+});
+
+// ARCHIVING ENDPOINT
+app.post('/api/maintenance/archive', async (req, res) => {
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        
+        await ensureArchiveSheet(sheets, spreadsheetId);
+        
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:M' });
+        const rows = response.data.values || [];
+        if (rows.length <= 1) return res.json({ count: 0 });
+
+        const now = Date.now();
+        const retentionDays = 7; // Keep last 7 days of Picked Up items for immediate reference
+        const rowsToArchive = [];
+        const indicesToDelete = [];
+
+        // Skip header
+        for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            const status = row[3];
+            const pickupTime = row[5];
+            
+            if (status === 'Picked Up' && pickupTime) {
+                const diffDays = (now - new Date(pickupTime).getTime()) / (1000 * 3600 * 24);
+                if (diffDays > retentionDays) {
+                    rowsToArchive.push(row);
+                    indicesToDelete.push(i);
+                }
+            }
+        }
+
+        if (rowsToArchive.length === 0) return res.json({ count: 0 });
+
+        // 1. Copy to Archive
+        await sheets.spreadsheets.values.append({
+            spreadsheetId,
+            range: 'Archive_Packages!A:A',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: rowsToArchive }
+        });
+
+        // 2. Delete from Packages (Must delete in reverse order to keep indices valid)
+        const sheetId = await getSheetId(sheets, spreadsheetId, 'Packages');
+        const deleteRequests = indicesToDelete.reverse().map(idx => ({
+            deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 } }
+        }));
+
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: { requests: deleteRequests }
+        });
+
+        res.json({ count: rowsToArchive.length });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "歸檔失敗" });
+    }
 });
 
 export default app;
