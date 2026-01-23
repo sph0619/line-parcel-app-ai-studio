@@ -228,7 +228,10 @@ app.post('/api/packages/:id/generate-otp', async (req, res) => {
        const uIdx = allUsers.findIndex(r => r[0] === targetUser[0]);
        if (uIdx !== -1) { updates.push({ range: `Users!E${uIdx + 1}`, values: [[`${otp}:${expiry}`]] }); }
     }
-    if (updates.length > 0) { await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } }); }
+    if (updates.length > 0) { 
+      // FIX: Use spreadsheets.values.batchUpdate for value updates
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } }); 
+    }
     if (lineClient) {
       const message = { type: 'text', text: `🔐 取件驗證碼：【 ${otp} 】\n(10分鐘內有效)` };
       await Promise.all(users.map(u => lineClient.pushMessage(u[0], message)));
@@ -277,7 +280,8 @@ app.post('/api/pickup/confirm', async (req, res) => {
                 );
             }
         }
-        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
+        // FIX: Use spreadsheets.values.batchUpdate for value updates
+        await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
 });
@@ -311,7 +315,10 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const sheets = google.sheets({ version: 'v4', auth });
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
-        if (idx !== -1) return res.status(404).end();
+        
+        // FIX: Logic was reversed. Return 404 if NOT found.
+        if (idx === -1) return res.status(404).end();
+        
         const rowNum = idx + 1;
         const now = new Date().toISOString();
         const updates = [
@@ -321,7 +328,8 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
             { range: `Packages!H${rowNum}`, values: [[signatureDataURL]] },
             { range: `Packages!M${rowNum}`, values: [[managerCode]] }
         ];
-        await sheets.spreadsheets.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
+        // FIX: Use spreadsheets.values.batchUpdate for value updates
+        await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
 });
