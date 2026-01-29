@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
@@ -102,21 +101,23 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const filteredUsers = useMemo(() => {
     let result = [...users];
     
-    // 1. Search filter
+    // 1. 精準搜尋過濾：僅針對戶號與姓名
     const term = searchTerm.trim().toUpperCase();
     if (term) {
       result = result.filter(u => {
           const hId = (u.householdId || '').toString().toUpperCase();
           const name = (u.name || '').toString().toUpperCase();
-          return hId.includes(term) || name.includes(term);
+          // 精準比對戶號或是模糊搜尋姓名
+          return hId === term || hId.includes(term) || name.includes(term);
       });
     }
 
-    // 2. Sorting logic (Natural sort for household IDs like 10A1, 9B2)
+    // 2. 排序邏輯：支援戶號自然排序 (Natural Sort，例如 9A1 會在 10A1 前面)
     if (userSortDir) {
         result.sort((a, b) => {
             const valA = (a.householdId || '').toString();
             const valB = (b.householdId || '').toString();
+            // 使用 localeCompare 並開啟 numeric 模式來處理帶數字的字串
             return userSortDir === 'asc' 
                 ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' })
                 : valB.localeCompare(valA, undefined, { numeric: true, sensitivity: 'base' });
@@ -237,7 +238,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                     <tr>
                       <th 
-                        className="px-6 py-3 font-medium cursor-pointer hover:text-blue-600 transition-colors select-none group"
+                        className="px-6 py-3 font-bold cursor-pointer hover:text-blue-600 transition-colors select-none group"
                         onClick={toggleUserSort}
                       >
                         <div className="flex items-center gap-1">
@@ -246,7 +247,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
-                      <th className="px-6 py-3 font-medium">綁定時間</th>
+                      <th className="px-6 py-3 font-medium">綁定狀態</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
                   </thead>
@@ -254,8 +255,14 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     {filteredUsers.map((user, index) => (
                       <tr key={user.lineId || `user-${index}`} className="hover:bg-slate-50">
                         <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
-                        <td className="px-6 py-3 text-slate-700">{user.name}</td>
-                        <td className="px-6 py-3 text-slate-500 text-xs">{user.joinDate ? new Date(user.joinDate).toLocaleDateString() : '-'}</td>
+                        <td className="px-6 py-3 text-slate-700">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
+                        <td className="px-6 py-3">
+                           {user.lineId ? (
+                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">Line 帳號</span>
+                           ) : (
+                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">手動輸入</span>
+                           )}
+                        </td>
                         <td className="px-6 py-3 text-right">
                           <button onClick={() => handleDeleteUser(user.lineId)} disabled={!!processingId} className="p-2 text-slate-400 hover:text-red-600 rounded-lg">
                              {processingId === user.lineId ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
