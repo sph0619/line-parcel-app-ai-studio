@@ -1,3 +1,4 @@
+
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -169,7 +170,17 @@ app.get('/api/users', async (req, res) => {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
-        const uniqueUsers = (response.data.values || []).filter(r => r[0] && r[1]).map(r => ({ lineId: r[0], householdId: r[1], name: r[2], joinDate: r[3], status: 'APPROVED' }));
+        const rows = response.data.values || [];
+        
+        // Strict mapping based on Columns A (0), B (1), C (2), D (3)
+        // User confirmed no header row exists
+        const uniqueUsers = rows.filter(r => (r[1] || r[2])).map(r => ({ 
+            lineId: r[0] || '', 
+            householdId: (r[1] || '').toString().trim().toUpperCase(), 
+            name: r[2] || '', 
+            joinDate: r[3] || '', 
+            status: 'APPROVED' 
+        }));
         res.json(uniqueUsers);
     } catch (error) { res.status(500).json([]); }
 });
@@ -179,8 +190,12 @@ app.get('/api/packages', async (req, res) => {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
-    const cleaned = (response.data.values || []).filter(row => row[0] && row[0] !== 'pkgId');
-    res.json(cleaned.map(row => ({
+    const rows = response.data.values || [];
+    
+    // Filter out header row
+    const dataRows = rows.filter((row, idx) => idx > 0 && row[0]);
+    
+    res.json(dataRows.map(row => ({
       packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
     })).reverse());
   } catch (error) { res.status(500).json([]); }
