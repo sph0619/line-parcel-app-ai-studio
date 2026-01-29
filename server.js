@@ -1,4 +1,3 @@
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -169,19 +168,43 @@ app.get('/api/users', async (req, res) => {
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
+        // Request a wider range to avoid truncation
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
         const rows = response.data.values || [];
         
-        // Strict mapping based on Columns A (0), B (1), C (2), D (3)
-        // User confirmed no header row exists
-        const uniqueUsers = rows.filter(r => (r[1] || r[2])).map(r => ({ 
-            lineId: r[0] || '', 
-            householdId: (r[1] || '').toString().trim().toUpperCase(), 
-            name: r[2] || '', 
-            joinDate: r[3] || '', 
-            status: 'APPROVED' 
-        }));
-        res.json(uniqueUsers);
+        const mappedUsers = rows.map(r => {
+            // Intelligent Data Mapping to solve Shifting problem
+            // If the user manually input data starting from Column A (Line ID empty)
+            // r[0] might be the householdId instead of Line ID
+            let lineId = '';
+            let householdId = '';
+            let name = '';
+            let joinDate = '';
+
+            if (r[0] && validateHouseholdId(r[0])) {
+                // Shifted case: r[0] is HouseholdId
+                lineId = '';
+                householdId = r[0];
+                name = r[1] || '';
+                joinDate = r[2] || '';
+            } else {
+                // Normal case: r[0] is Line ID
+                lineId = r[0] || '';
+                householdId = r[1] || '';
+                name = r[2] || '';
+                joinDate = r[3] || '';
+            }
+
+            return { 
+                lineId, 
+                householdId: householdId.toString().trim().toUpperCase(), 
+                name: name.toString().trim(), 
+                joinDate: joinDate || '', 
+                status: 'APPROVED' 
+            };
+        }).filter(u => u.householdId || u.name); // Filter out truly empty rows
+
+        res.json(mappedUsers);
     } catch (error) { res.status(500).json([]); }
 });
 
