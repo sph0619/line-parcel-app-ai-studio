@@ -3,8 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-// Added RefreshCw to imports to fix line 254 error
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
 import { ManualPickupModal } from './ManualPickupModal';
 
 interface Props {
@@ -13,6 +12,7 @@ interface Props {
 }
 
 type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE';
+type SortDir = 'asc' | 'desc' | null;
 
 export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [activeTab, setActiveTab] = useState<Tab>('PACKAGES');
@@ -22,6 +22,9 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const [selectedPkgForManual, setSelectedPkgForManual] = useState<PackageItem | null>(null);
+  
+  // Sorting state
+  const [userSortDir, setUserSortDir] = useState<SortDir>('asc');
 
   useEffect(() => {
     if (activeTab === 'USERS') {
@@ -82,24 +85,46 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     }
   };
 
+  const toggleUserSort = () => {
+    setUserSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+  };
+
   const filteredPackages = useMemo(() => {
     const term = searchTerm.trim().toUpperCase();
     if (!term) return packages;
     return packages.filter(p => 
-      p.householdId.toUpperCase().includes(term) || 
-      p.barcode.toUpperCase().includes(term) ||
-      (p.recipientName && p.recipientName.toUpperCase().includes(term))
+      (p.householdId && p.householdId.toString().toUpperCase().includes(term)) || 
+      (p.barcode && p.barcode.toString().toUpperCase().includes(term)) ||
+      (p.recipientName && p.recipientName.toString().toUpperCase().includes(term))
     );
   }, [packages, searchTerm]);
 
   const filteredUsers = useMemo(() => {
+    let result = [...users];
+    
+    // 1. Search filter
     const term = searchTerm.trim().toUpperCase();
-    if (!term) return users;
-    return users.filter(u => 
-      u.householdId.toUpperCase().includes(term) || 
-      u.name.toUpperCase().includes(term)
-    );
-  }, [users, searchTerm]);
+    if (term) {
+      result = result.filter(u => {
+          const hId = (u.householdId || '').toString().toUpperCase();
+          const name = (u.name || '').toString().toUpperCase();
+          return hId.includes(term) || name.includes(term);
+      });
+    }
+
+    // 2. Sorting logic (Natural sort for household IDs like 10A1, 9B2)
+    if (userSortDir) {
+        result.sort((a, b) => {
+            const valA = (a.householdId || '').toString();
+            const valB = (b.householdId || '').toString();
+            return userSortDir === 'asc' 
+                ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' })
+                : valB.localeCompare(valA, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    }
+
+    return result;
+  }, [users, searchTerm, userSortDir]);
 
   return (
     <div className="space-y-6">
@@ -211,7 +236,15 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                     <tr>
-                      <th className="px-6 py-3 font-medium">戶號</th>
+                      <th 
+                        className="px-6 py-3 font-medium cursor-pointer hover:text-blue-600 transition-colors select-none group"
+                        onClick={toggleUserSort}
+                      >
+                        <div className="flex items-center gap-1">
+                            戶號
+                            {userSortDir === 'asc' ? <ChevronUp size={14} className="text-blue-600" /> : userSortDir === 'desc' ? <ChevronDown size={14} className="text-blue-600" /> : <ArrowUpDown size={14} className="opacity-0 group-hover:opacity-100" />}
+                        </div>
+                      </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
                       <th className="px-6 py-3 font-medium">綁定時間</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
