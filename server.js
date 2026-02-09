@@ -1,4 +1,3 @@
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -108,9 +107,12 @@ async function registerLineUser(lineUserId, householdId, name) {
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A' });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
         const rows = response.data.values || [];
-        if (rows.some(r => r[0] === lineUserId)) return { success: false, message: "此 LINE 帳號已綁定過。" };
+        // Check if this EXACT combination already exists
+        if (rows.some(r => r[0] === lineUserId && r[1] === householdId)) {
+          return { success: false, message: "此住戶已綁定過。" };
+        }
         await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId.trim().toUpperCase(), name.trim(), new Date().toISOString(), '']] } });
         return { success: true };
     } catch (error) { return { success: false }; }
@@ -177,7 +179,6 @@ app.get('/api/users', async (req, res) => {
             let name = '';
             let joinDate = '';
 
-            // 嚴格識別邏輯：確保只有符合格式的才是戶號
             if (r[0] && validateHouseholdId(r[0])) {
                 householdId = r[0].toString().trim();
                 name = (r[1] || '').toString().trim();
@@ -193,8 +194,6 @@ app.get('/api/users', async (req, res) => {
                 name = (r[1] || '').toString().trim();
                 joinDate = (r[3] || '').toString().trim();
             } else {
-                // 如果沒有任何一格像戶號，則這是一筆無效或格式錯誤的資料
-                // 為了安全，將其標記為空，稍後會被 filter 掉
                 householdId = '';
                 name = (r[0] || r[1] || '').toString().trim();
             }
@@ -210,6 +209,47 @@ app.get('/api/users', async (req, res) => {
 
         res.json(mappedUsers);
     } catch (error) { res.status(500).json([]); }
+});
+
+// NEW: Delete User Endpoint
+app.post('/api/users/delete', async (req, res) => {
+    const { lineId, householdId, name } = req.body;
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Users!A:C' });
+        const rows = response.data.values || [];
+        
+        // Find row that matches ALL provided criteria to handle duplicates correctly
+        const rowIndex = rows.findIndex(r => {
+            // Check based on mapping (LineId can be at 0 or empty if householdId is at 0)
+            const rowLineId = (r[0] && !validateHouseholdId(r[0])) ? r[0] : '';
+            const rowHId = validateHouseholdId(r[0]) ? r[0] : (validateHouseholdId(r[1]) ? r[1] : '');
+            const rowName = (r[0] === rowHId) ? r[1] : (r[1] === rowHId ? r[2] : '');
+
+            return (rowLineId === (lineId || '')) && 
+                   (rowHId.toString().toUpperCase() === householdId.toString().toUpperCase()) && 
+                   (rowName.toString() === name.toString());
+        });
+
+        if (rowIndex === -1) return res.status(404).json({ error: "找不到該用戶" });
+
+        const sheetId = await getSheetId(sheets, spreadsheetId, 'Users');
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{
+                    deleteDimension: {
+                        range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 }
+                    }
+                }]
+            }
+        });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "伺服器錯誤" });
+    }
 });
 
 app.get('/api/packages', async (req, res) => {
