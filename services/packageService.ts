@@ -86,8 +86,12 @@ export const packageService = {
     } catch (e) { return []; }
   },
   
-  deleteUser: async (id: string): Promise<void> => { 
-    const response = await fetch(`${API_BASE_URL}/users/${id}`, { method: 'DELETE' }); 
+  deleteUser: async (lineId: string, householdId: string, name: string): Promise<void> => { 
+    const response = await fetch(`${API_BASE_URL}/users/delete`, { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lineId, householdId, name })
+    }); 
     if (!response.ok) throw new Error('刪除失敗');
   },
   
