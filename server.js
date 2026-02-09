@@ -1,3 +1,4 @@
+
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -29,9 +30,9 @@ app.use(cors());
 
 function validateHouseholdId(id) {
   if (!id) return false;
-  // 戶號格式: 樓層(3-19) + 棟別門牌(A/B/C + 1/2/3/5)
+  const str = id.toString().trim().toUpperCase();
   const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1235])$/;
-  return regex.test(id.trim().toUpperCase());
+  return regex.test(str);
 }
 
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
@@ -55,7 +56,6 @@ async function getSheetId(sheets, spreadsheetId, title) {
     } catch (e) { return null; }
 }
 
-// Ensure Archive sheet exists
 async function ensureArchiveSheet(sheets, spreadsheetId) {
     const meta = await sheets.spreadsheets.get({ spreadsheetId });
     const exists = meta.data.sheets.some(s => s.properties.title === 'Archive_Packages');
@@ -64,7 +64,6 @@ async function ensureArchiveSheet(sheets, spreadsheetId) {
             spreadsheetId,
             requestBody: { requests: [{ addSheet: { properties: { title: 'Archive_Packages' } } }] }
         });
-        // Header row
         await sheets.spreadsheets.values.update({
             spreadsheetId,
             range: 'Archive_Packages!A1:M1',
@@ -172,45 +171,44 @@ app.get('/api/users', async (req, res) => {
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
         const rows = response.data.values || [];
         
-        const uniqueUsers = rows.map(r => {
+        const mappedUsers = rows.map(r => {
             let lineId = '';
             let householdId = '';
             let name = '';
             let joinDate = '';
 
-            // 智能欄位識別
+            // 嚴格識別邏輯：確保只有符合格式的才是戶號
             if (r[0] && validateHouseholdId(r[0])) {
-                // Shifted: A 欄即為戶號 (Line ID 空白)
-                householdId = r[0];
-                name = r[1] || '';
-                joinDate = r[2] || '';
+                householdId = r[0].toString().trim();
+                name = (r[1] || '').toString().trim();
+                joinDate = (r[2] || '').toString().trim();
             } else if (r[1] && validateHouseholdId(r[1])) {
-                // Normal: B 欄為戶號
-                lineId = r[0] || '';
-                householdId = r[1];
-                name = r[2] || '';
-                joinDate = r[3] || '';
+                lineId = (r[0] || '').toString().trim();
+                householdId = r[1].toString().trim();
+                name = (r[2] || '').toString().trim();
+                joinDate = (r[3] || '').toString().trim();
             } else if (r[2] && validateHouseholdId(r[2])) {
-                // Highly shifted case: C 欄才出現戶號
-                householdId = r[2];
-                name = r[1] || '';
-                joinDate = r[3] || '';
+                lineId = (r[0] || '').toString().trim();
+                householdId = r[2].toString().trim();
+                name = (r[1] || '').toString().trim();
+                joinDate = (r[3] || '').toString().trim();
             } else {
-                // Fallback for messy manual input
-                householdId = r[1] || r[0] || '';
-                name = r[2] || r[1] || '';
+                // 如果沒有任何一格像戶號，則這是一筆無效或格式錯誤的資料
+                // 為了安全，將其標記為空，稍後會被 filter 掉
+                householdId = '';
+                name = (r[0] || r[1] || '').toString().trim();
             }
 
             return { 
                 lineId, 
-                householdId: householdId.toString().trim().toUpperCase(), 
-                name: name.toString().trim(), 
-                joinDate: joinDate || '', 
+                householdId: householdId.toUpperCase(), 
+                name, 
+                joinDate, 
                 status: 'APPROVED' 
             };
-        }).filter(u => u.householdId && u.householdId !== 'HOUSEHOLDID'); // 過濾標題文字
+        }).filter(u => u.householdId && u.householdId !== 'HOUSEHOLDID'); 
 
-        res.json(uniqueUsers);
+        res.json(mappedUsers);
     } catch (error) { res.status(500).json([]); }
 });
 
