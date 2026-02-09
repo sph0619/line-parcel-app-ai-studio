@@ -22,7 +22,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [isArchiving, setIsArchiving] = useState(false);
   const [selectedPkgForManual, setSelectedPkgForManual] = useState<PackageItem | null>(null);
   
-  // Sorting state
+  // Sorting state for Users
   const [userSortDir, setUserSortDir] = useState<SortDir>('asc');
 
   useEffect(() => {
@@ -101,23 +101,23 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const filteredUsers = useMemo(() => {
     let result = [...users];
     
-    // 1. 精準搜尋過濾：僅針對戶號與姓名
+    // 1. 精準搜尋：僅針對 B 欄(戶號)或 C 欄(姓名)
     const term = searchTerm.trim().toUpperCase();
     if (term) {
       result = result.filter(u => {
           const hId = (u.householdId || '').toString().toUpperCase();
           const name = (u.name || '').toString().toUpperCase();
-          // 精準比對戶號或是模糊搜尋姓名
+          // 如果輸入剛好是戶號則精準匹配，否則使用模糊搜尋
           return hId === term || hId.includes(term) || name.includes(term);
       });
     }
 
-    // 2. 排序邏輯：支援戶號自然排序 (Natural Sort，例如 9A1 會在 10A1 前面)
+    // 2. 自然排序邏輯 (Natural Sort)
     if (userSortDir) {
         result.sort((a, b) => {
             const valA = (a.householdId || '').toString();
             const valB = (b.householdId || '').toString();
-            // 使用 localeCompare 並開啟 numeric 模式來處理帶數字的字串
+            // 使用 localeCompare 開啟 numeric 模式，這會讓 '9A' 排在 '10A' 之前
             return userSortDir === 'asc' 
                 ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' })
                 : valB.localeCompare(valA, undefined, { numeric: true, sensitivity: 'base' });
@@ -186,7 +186,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
               <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                 <tr>
                   <th className="px-6 py-3 font-medium">狀態</th>
-                  <th className="px-6 py-3 font-medium">戶號</th>
+                  <th className="px-6 py-3 font-medium text-blue-600">戶號</th>
                   <th className="px-6 py-3 font-medium">收件人</th>
                   <th className="px-6 py-3 font-medium">條碼</th>
                   <th className="px-6 py-3 font-medium text-right">操作</th>
@@ -242,12 +242,12 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         onClick={toggleUserSort}
                       >
                         <div className="flex items-center gap-1">
-                            戶號
+                            戶號 (點擊排序)
                             {userSortDir === 'asc' ? <ChevronUp size={14} className="text-blue-600" /> : userSortDir === 'desc' ? <ChevronDown size={14} className="text-blue-600" /> : <ArrowUpDown size={14} className="opacity-0 group-hover:opacity-100" />}
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
-                      <th className="px-6 py-3 font-medium">綁定狀態</th>
+                      <th className="px-6 py-3 font-medium">綁定類型</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
                   </thead>
@@ -255,12 +255,12 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     {filteredUsers.map((user, index) => (
                       <tr key={user.lineId || `user-${index}`} className="hover:bg-slate-50">
                         <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
-                        <td className="px-6 py-3 text-slate-700">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
+                        <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
                         <td className="px-6 py-3">
                            {user.lineId ? (
-                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">Line 帳號</span>
+                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 帳號</span>
                            ) : (
-                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">手動輸入</span>
+                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">管理室手動輸入</span>
                            )}
                         </td>
                         <td className="px-6 py-3 text-right">
@@ -297,23 +297,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                                 立即執行清理歸檔
                             </button>
                             <span className="text-xs text-slate-400 italic">建議每個月執行一次</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="pt-8 border-t border-slate-100">
-                    <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <AlertTriangle size={18} className="text-red-500" />
-                        系統限制提示
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-4 bg-slate-50 rounded-xl">
-                            <p className="text-xs font-bold text-slate-700 mb-1">Google Sheet 容量</p>
-                            <p className="text-xs text-slate-500">目前上限約為 76 萬筆包裹紀錄。透過歸檔可維持效能穩定。</p>
-                        </div>
-                        <div className="p-4 bg-slate-50 rounded-xl">
-                            <p className="text-xs font-bold text-slate-700 mb-1">API 限制</p>
-                            <p className="text-xs text-slate-500">Google API 有每分鐘請求次數限制，避免在短時間內連續執行大量刪除操作。</p>
                         </div>
                     </div>
                 </div>
