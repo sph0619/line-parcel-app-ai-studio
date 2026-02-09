@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
@@ -57,15 +56,21 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     }
   };
 
-  const handleDeleteUser = async (lineId: string) => {
-    if (!window.confirm('確定要解除綁定並刪除此用戶嗎？')) return;
-    setProcessingId(lineId);
+  const handleDeleteUser = async (user: User, index: number) => {
+    const identifier = user.lineId || `manual-${index}`;
+    if (!window.confirm(`確定要刪除住戶「${user.householdId} ${user.name}」嗎？`)) return;
+    
+    setProcessingId(identifier);
     try {
-      await packageService.deleteUser(lineId);
-      triggerToast('用戶已刪除', 'success');
-      setUsers(prev => prev.filter(u => u.lineId !== lineId));
+      await packageService.deleteUser(user.lineId, user.householdId, user.name);
+      triggerToast('住戶資料已刪除', 'success');
+      setUsers(prev => prev.filter((u, idx) => {
+          const uId = u.lineId || `manual-${idx}`;
+          // Match all fields to be safe
+          return !(u.lineId === user.lineId && u.householdId === user.householdId && u.name === user.name);
+      }));
     } catch (e) {
-      triggerToast('刪除失敗', 'error');
+      triggerToast('刪除失敗，後端路由異常或找不到資料', 'error');
     } finally {
       setProcessingId(null);
     }
@@ -109,7 +114,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           const hId = (u.householdId || '').toString().toUpperCase().trim();
           const name = (u.name || '').toString().toUpperCase().trim();
           
-          // 如果搜尋詞包含在戶號中，或者包含在姓名中，則返回 true
           return hId.includes(term) || name.includes(term);
       });
     }
@@ -253,24 +257,33 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredUsers.map((user, index) => (
-                      <tr key={user.lineId || `user-${index}`} className="hover:bg-slate-50">
-                        <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
-                        <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
-                        <td className="px-6 py-3">
-                           {user.lineId ? (
-                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 已綁定</span>
-                           ) : (
-                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">手動清單</span>
-                           )}
-                        </td>
-                        <td className="px-6 py-3 text-right">
-                          <button onClick={() => handleDeleteUser(user.lineId)} disabled={!!processingId} className="p-2 text-slate-400 hover:text-red-600 rounded-lg">
-                             {processingId === user.lineId ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredUsers.map((user, index) => {
+                      const identifier = user.lineId || `manual-${index}`;
+                      const isProcessing = processingId === identifier;
+                      
+                      return (
+                        <tr key={identifier} className="hover:bg-slate-50">
+                          <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
+                          <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
+                          <td className="px-6 py-3">
+                             {user.lineId ? (
+                               <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 已綁定</span>
+                             ) : (
+                               <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">手動清單</span>
+                             )}
+                          </td>
+                          <td className="px-6 py-3 text-right">
+                            <button 
+                                onClick={() => handleDeleteUser(user, index)} 
+                                disabled={!!processingId} 
+                                className={`p-2 rounded-lg transition-colors ${isProcessing ? 'text-blue-600' : 'text-slate-400 hover:text-red-600'}`}
+                            >
+                               {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
              )}
