@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
@@ -101,23 +102,23 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const filteredUsers = useMemo(() => {
     let result = [...users];
     
-    // 1. 精準搜尋：僅針對 B 欄(戶號)或 C 欄(姓名)
+    // 1. 搜尋過濾
     const term = searchTerm.trim().toUpperCase();
     if (term) {
       result = result.filter(u => {
-          const hId = (u.householdId || '').toString().toUpperCase();
-          const name = (u.name || '').toString().toUpperCase();
-          // 如果輸入剛好是戶號則精準匹配，否則使用模糊搜尋
-          return hId === term || hId.includes(term) || name.includes(term);
+          const hId = (u.householdId || '').toString().toUpperCase().trim();
+          const name = (u.name || '').toString().toUpperCase().trim();
+          
+          // 如果搜尋詞包含在戶號中，或者包含在姓名中，則返回 true
+          return hId.includes(term) || name.includes(term);
       });
     }
 
-    // 2. 自然排序邏輯 (Natural Sort)
+    // 2. 排序邏輯 (Natural Sort)
     if (userSortDir) {
         result.sort((a, b) => {
-            const valA = (a.householdId || '').toString();
-            const valB = (b.householdId || '').toString();
-            // 使用 localeCompare 開啟 numeric 模式，這會讓 '9A' 排在 '10A' 之前
+            const valA = (a.householdId || '').toString().trim();
+            const valB = (b.householdId || '').toString().trim();
             return userSortDir === 'asc' 
                 ? valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' })
                 : valB.localeCompare(valA, undefined, { numeric: true, sensitivity: 'base' });
@@ -247,7 +248,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
-                      <th className="px-6 py-3 font-medium">綁定類型</th>
+                      <th className="px-6 py-3 font-medium">狀態</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
                   </thead>
@@ -258,9 +259,9 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
                         <td className="px-6 py-3">
                            {user.lineId ? (
-                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 帳號</span>
+                             <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 已綁定</span>
                            ) : (
-                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">管理室手動輸入</span>
+                             <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full font-bold">手動清單</span>
                            )}
                         </td>
                         <td className="px-6 py-3 text-right">
