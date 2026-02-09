@@ -29,6 +29,7 @@ app.use(cors());
 
 function validateHouseholdId(id) {
   if (!id) return false;
+  // 戶號格式: 樓層(3-19) + 棟別門牌(A/B/C + 1/2/3/5)
   const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1235])$/;
   return regex.test(id.trim().toUpperCase());
 }
@@ -168,31 +169,36 @@ app.get('/api/users', async (req, res) => {
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
-        // Request a wider range to avoid truncation
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
         const rows = response.data.values || [];
         
-        const mappedUsers = rows.map(r => {
-            // Intelligent Data Mapping to solve Shifting problem
-            // If the user manually input data starting from Column A (Line ID empty)
-            // r[0] might be the householdId instead of Line ID
+        const uniqueUsers = rows.map(r => {
             let lineId = '';
             let householdId = '';
             let name = '';
             let joinDate = '';
 
+            // 智能欄位識別
             if (r[0] && validateHouseholdId(r[0])) {
-                // Shifted case: r[0] is HouseholdId
-                lineId = '';
+                // Shifted: A 欄即為戶號 (Line ID 空白)
                 householdId = r[0];
                 name = r[1] || '';
                 joinDate = r[2] || '';
-            } else {
-                // Normal case: r[0] is Line ID
+            } else if (r[1] && validateHouseholdId(r[1])) {
+                // Normal: B 欄為戶號
                 lineId = r[0] || '';
-                householdId = r[1] || '';
+                householdId = r[1];
                 name = r[2] || '';
                 joinDate = r[3] || '';
+            } else if (r[2] && validateHouseholdId(r[2])) {
+                // Highly shifted case: C 欄才出現戶號
+                householdId = r[2];
+                name = r[1] || '';
+                joinDate = r[3] || '';
+            } else {
+                // Fallback for messy manual input
+                householdId = r[1] || r[0] || '';
+                name = r[2] || r[1] || '';
             }
 
             return { 
@@ -202,9 +208,9 @@ app.get('/api/users', async (req, res) => {
                 joinDate: joinDate || '', 
                 status: 'APPROVED' 
             };
-        }).filter(u => u.householdId || u.name); // Filter out truly empty rows
+        }).filter(u => u.householdId && u.householdId !== 'HOUSEHOLDID'); // 過濾標題文字
 
-        res.json(mappedUsers);
+        res.json(uniqueUsers);
     } catch (error) { res.status(500).json([]); }
 });
 
@@ -214,10 +220,7 @@ app.get('/api/packages', async (req, res) => {
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
-    
-    // Filter out header row
     const dataRows = rows.filter((row, idx) => idx > 0 && row[0]);
-    
     res.json(dataRows.map(row => ({
       packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
     })).reverse());
@@ -228,16 +231,13 @@ app.post('/api/packages', async (req, res) => {
   let { householdId, barcode, recipientName, packageType = 'general', logisticsCompany = '' } = req.body;
   householdId = householdId.trim().toUpperCase();
   barcode = barcode.trim();
-  
   if (!validateHouseholdId(householdId)) return res.status(400).json({ error: "戶號格式錯誤" });
-
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const existingResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const isDuplicate = (existingResp.data.values || []).some(r => r[0] === barcode && r[2] === 'Pending');
     if (isDuplicate) return res.status(409).json({ error: "此條碼已在待領清單中，請勿重複入庫" });
-
     const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     await notifyUser(householdId, barcode, recipientName, packageType);
@@ -267,7 +267,6 @@ app.post('/api/packages/:id/generate-otp', async (req, res) => {
        if (uIdx !== -1) { updates.push({ range: `Users!E${uIdx + 1}`, values: [[`${otp}:${expiry}`]] }); }
     }
     if (updates.length > 0) { 
-      // FIX: Use spreadsheets.values.batchUpdate for value updates
       await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } }); 
     }
     if (lineClient) {
@@ -318,7 +317,6 @@ app.post('/api/pickup/confirm', async (req, res) => {
                 );
             }
         }
-        // FIX: Use spreadsheets.values.batchUpdate for value updates
         await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
@@ -353,10 +351,7 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const sheets = google.sheets({ version: 'v4', auth });
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
-        
-        // FIX: Logic was reversed. Return 404 if NOT found.
         if (idx === -1) return res.status(404).end();
-        
         const rowNum = idx + 1;
         const now = new Date().toISOString();
         const updates = [
@@ -366,36 +361,28 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
             { range: `Packages!H${rowNum}`, values: [[signatureDataURL]] },
             { range: `Packages!M${rowNum}`, values: [[managerCode]] }
         ];
-        // FIX: Use spreadsheets.values.batchUpdate for value updates
         await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
 });
 
-// ARCHIVING ENDPOINT
 app.post('/api/maintenance/archive', async (req, res) => {
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        
         await ensureArchiveSheet(sheets, spreadsheetId);
-        
         const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:M' });
         const rows = response.data.values || [];
         if (rows.length <= 1) return res.json({ count: 0 });
-
         const now = Date.now();
-        const retentionDays = 7; // Keep last 7 days of Picked Up items for immediate reference
+        const retentionDays = 7;
         const rowsToArchive = [];
         const indicesToDelete = [];
-
-        // Skip header
         for (let i = 1; i < rows.length; i++) {
             const row = rows[i];
             const status = row[3];
             const pickupTime = row[5];
-            
             if (status === 'Picked Up' && pickupTime) {
                 const diffDays = (now - new Date(pickupTime).getTime()) / (1000 * 3600 * 24);
                 if (diffDays > retentionDays) {
@@ -404,33 +391,23 @@ app.post('/api/maintenance/archive', async (req, res) => {
                 }
             }
         }
-
         if (rowsToArchive.length === 0) return res.json({ count: 0 });
-
-        // 1. Copy to Archive
         await sheets.spreadsheets.values.append({
             spreadsheetId,
             range: 'Archive_Packages!A:A',
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: rowsToArchive }
         });
-
-        // 2. Delete from Packages (Must delete in reverse order to keep indices valid)
         const sheetId = await getSheetId(sheets, spreadsheetId, 'Packages');
         const deleteRequests = indicesToDelete.reverse().map(idx => ({
             deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: idx, endIndex: idx + 1 } }
         }));
-
         await sheets.spreadsheets.batchUpdate({
             spreadsheetId,
             requestBody: { requests: deleteRequests }
         });
-
         res.json({ count: rowsToArchive.length });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "歸檔失敗" });
-    }
+    } catch (error) { res.status(500).json({ error: "歸檔失敗" }); }
 });
 
 export default app;
