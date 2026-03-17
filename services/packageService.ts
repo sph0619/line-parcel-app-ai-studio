@@ -16,13 +16,14 @@ const setPackagesToCache = (packages: PackageItem[]) => {
 export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/packages`);
-      if (!response.ok) throw new Error();
+      // 加入時間戳記防止瀏覽器快取
+      const response = await fetch(`${API_BASE_URL}/packages?t=${Date.now()}`);
+      if (!response.ok) throw new Error('網路請求失敗');
       const data = await response.json();
-      setPackagesToCache(data); 
       return data;
     } catch (e) { 
-      return getFallbackPackages(); 
+      console.error("Fetch packages error:", e);
+      throw e; // 向上拋出錯誤，讓 UI 層級處理
     }
   },
   
@@ -80,7 +81,7 @@ export const packageService = {
   
   getAllUsers: async (): Promise<User[]> => {
     try { 
-      const r = await fetch(`${API_BASE_URL}/users`); 
+      const r = await fetch(`${API_BASE_URL}/users?t=${Date.now()}`); 
       if (!r.ok) return [];
       return await r.json(); 
     } catch (e) { return []; }
