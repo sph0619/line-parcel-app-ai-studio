@@ -23,7 +23,13 @@ const formatDateShort = (dateStr: string) => {
 }
 
 export const HistoryLog: React.FC<Props> = ({ packages }) => {
-  const historyItems = packages.filter(p => p.status === 'Picked Up');
+  const historyItems = packages
+    .filter(p => p.status === 'Picked Up')
+    .sort((a, b) => {
+      const timeA = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
+      const timeB = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
+      return timeB - timeA;
+    });
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
