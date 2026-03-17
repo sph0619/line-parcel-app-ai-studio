@@ -167,6 +167,7 @@ async function notifyUser(householdId, barcode, recipientName = null, packageTyp
 // --- API Routes ---
 
 app.get('/api/users', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
@@ -253,6 +254,7 @@ app.post('/api/users/delete', async (req, res) => {
 });
 
 app.get('/api/packages', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
