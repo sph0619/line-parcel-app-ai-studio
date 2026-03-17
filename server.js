@@ -23,6 +23,14 @@ const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret)
   ? new Client(lineConfig) 
   : null;
 
+// 獲取台灣時間 (UTC+8) 的格式化字串
+function getTaiwanTimestamp() {
+  const now = new Date();
+  // 增加 8 小時偏移量
+  const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  return twTime.toISOString().replace('T', ' ').substring(0, 19);
+}
+
 app.use('/callback', middleware(lineConfig));
 app.use(express.json({ limit: '5mb' }));
 app.use(cors());
@@ -113,7 +121,7 @@ async function registerLineUser(lineUserId, householdId, name) {
         if (rows.some(r => r[0] === lineUserId && r[1] === householdId)) {
           return { success: false, message: "此住戶已綁定過。" };
         }
-        await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId.trim().toUpperCase(), name.trim(), new Date().toISOString(), '']] } });
+        await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId.trim().toUpperCase(), name.trim(), getTaiwanTimestamp(), '']] } });
         return { success: true };
     } catch (error) { return { success: false }; }
 }
@@ -278,7 +286,7 @@ app.post('/api/packages', async (req, res) => {
     const existingResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const isDuplicate = (existingResp.data.values || []).some(r => r[0] === barcode && r[2] === 'Pending');
     if (isDuplicate) return res.status(409).json({ error: "此條碼已在待領清單中，請勿重複入庫" });
-    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
+    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', getTaiwanTimestamp(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     await notifyUser(householdId, barcode, recipientName, packageType);
     res.json({ success: true });
@@ -344,7 +352,7 @@ app.post('/api/pickup/confirm', async (req, res) => {
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const rows = list.data.values || [];
         const updates = [];
-        const now = new Date().toISOString();
+        const now = getTaiwanTimestamp();
         for (const pid of packageIds) {
             const idx = rows.findIndex(r => r[0] === pid);
             if (idx !== -1) {
@@ -393,7 +401,7 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
         if (idx === -1) return res.status(404).end();
         const rowNum = idx + 1;
-        const now = new Date().toISOString();
+        const now = getTaiwanTimestamp();
         const updates = [
             { range: `Packages!D${rowNum}`, values: [['Picked Up']] },
             { range: `Packages!F${rowNum}`, values: [[now]] },
