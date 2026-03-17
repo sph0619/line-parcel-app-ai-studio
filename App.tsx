@@ -10,6 +10,7 @@ import { UserGuide } from './components/UserGuide';
 import { Toaster } from './components/Toaster';
 import { PackageItem, TabType } from './types';
 import { packageService } from './services/packageService';
+import { triggerToast } from './components/Toaster';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(packageService.isLoggedIn());
@@ -17,12 +18,14 @@ export default function App() {
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [userCount, setUserCount] = useState<number>(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Initial data load - only if authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     
     const fetchData = async () => {
+      setIsLoading(true);
       try {
         const [pkgData, userData] = await Promise.all([
           packageService.getPackages(),
@@ -33,6 +36,9 @@ export default function App() {
         setUserCount(userData.length);
       } catch (error) {
         console.error("Failed to fetch data", error);
+        triggerToast("資料連線失敗，請檢查網路或重新整理", "error");
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchData();
@@ -40,6 +46,14 @@ export default function App() {
 
   const refreshData = () => {
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    // 切換到重要分頁時自動重新整理資料
+    if (['dashboard', 'history', 'management', 'pickup'].includes(tab)) {
+      refreshData();
+    }
   };
 
   const handleLogout = () => {
@@ -106,39 +120,39 @@ export default function App() {
         <nav className="p-4 space-y-2 flex-1">
           <NavButton 
             active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => handleTabChange('dashboard')} 
             icon={<LayoutDashboard size={20} />} 
             label="系統總覽" 
           />
           <NavButton 
             active={activeTab === 'checkin'} 
-            onClick={() => setActiveTab('checkin')} 
+            onClick={() => handleTabChange('checkin')} 
             icon={<CheckSquare size={20} />} 
             label="包裹入庫" 
           />
           <NavButton 
             active={activeTab === 'pickup'} 
-            onClick={() => setActiveTab('pickup')} 
+            onClick={() => handleTabChange('pickup')} 
             icon={<Bell size={20} />} 
             label="領取作業" 
             badge={packages.filter(p => p.status === 'Pending').length}
           />
           <NavButton 
             active={activeTab === 'history'} 
-            onClick={() => setActiveTab('history')} 
+            onClick={() => handleTabChange('history')} 
             icon={<History size={20} />} 
             label="歷史紀錄" 
           />
           <NavButton 
             active={activeTab === 'management'} 
-            onClick={() => setActiveTab('management')} 
+            onClick={() => handleTabChange('management')} 
             icon={<Settings size={20} />} 
             label="資料管理" 
           />
           <div className="pt-4 mt-4 border-t border-slate-700">
             <NavButton 
               active={activeTab === 'guide'} 
-              onClick={() => setActiveTab('guide')} 
+              onClick={() => handleTabChange('guide')} 
               icon={<BookOpen size={20} />} 
               label="使用手冊" 
             />
