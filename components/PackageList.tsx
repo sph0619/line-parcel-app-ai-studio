@@ -2,39 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { PackageItem } from '../types';
 import { Search, Clock, Package as PkgIcon, AlertTriangle, Filter, User } from 'lucide-react';
 import { PickupModal } from './PickupModal';
+import { parseDate, isOverdue } from '../lib/dateUtils';
 
 interface Props {
   packages: PackageItem[];
   onUpdate: () => void;
   mode: 'pickup' | 'view';
 }
-
-const parseDate = (dateStr: any) => {
-  if (!dateStr) return new Date();
-  if (dateStr instanceof Date) return isNaN(dateStr.getTime()) ? new Date() : dateStr;
-  const s = String(dateStr).trim();
-  if (!s || s === 'undefined' || s === 'null') return new Date();
-  let d = new Date(s);
-  if (!isNaN(d.getTime())) return d;
-  let normalized = s.replace(/\//g, '-');
-  if (normalized.includes(' ') && !normalized.includes('T')) {
-    normalized = normalized.replace(' ', 'T');
-  }
-  d = new Date(normalized);
-  if (!isNaN(d.getTime())) return d;
-  const parts = s.match(/\d+/g);
-  if (parts && parts.length >= 3) {
-    const year = parseInt(parts[0]);
-    const month = parseInt(parts[1]) - 1;
-    const day = parseInt(parts[2]);
-    const hour = parts[3] ? parseInt(parts[3]) : 0;
-    const minute = parts[4] ? parseInt(parts[4]) : 0;
-    const second = parts[5] ? parseInt(parts[5]) : 0;
-    const finalDate = new Date(year, month, day, hour, minute, second);
-    if (!isNaN(finalDate.getTime())) return finalDate;
-  }
-  return new Date();
-};
 
 const timeAgo = (dateStr: string) => {
   const date = parseDate(dateStr);
@@ -105,7 +79,7 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredPackages.map((pkg) => {
-                  const isOverdue = pkg.status === 'Pending' && pkg.isOverdueNotified;
+                  const overdue = pkg.status === 'Pending' && isOverdue(pkg.receivedTime, 3);
                   
                   return (
                     <tr key={pkg.packageId} className="hover:bg-slate-50 transition-colors">
@@ -120,7 +94,7 @@ export const PackageList: React.FC<Props> = ({ packages, onUpdate, mode }) => {
                           }`} />
                           {pkg.status === 'Pending' ? '待領取' : '已領取'}
                         </span>
-                        {isOverdue && (
+                        {overdue && (
                           <div className="mt-1 flex items-center gap-1 text-xs text-red-600 font-medium">
                             <AlertTriangle size={10} />
                             逾期
