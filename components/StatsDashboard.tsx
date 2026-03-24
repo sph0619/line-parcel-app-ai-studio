@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PackageItem } from '../types';
 import { Package, Truck, AlertTriangle, UserCheck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { parseDate, formatDateShort, isToday, isOverdue } from '../lib/dateUtils';
 
 interface Props {
   packages: PackageItem[];
@@ -12,16 +13,10 @@ export const StatsDashboard: React.FC<Props> = ({ packages, userCount }) => {
   const stats = useMemo(() => {
     const pending = packages.filter(p => p.status === 'Pending').length;
     
-    // Start of day calculation
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    const today = packages.filter(p => {
-       const d = new Date(p.receivedTime);
-       return d >= startOfToday;
-    }).length;
+    const today = packages.filter(p => isToday(p.receivedTime)).length;
     
-    const overdue = packages.filter(p => p.isOverdueNotified && p.status === 'Pending').length;
+    // 逾期未領：狀態為 Pending 且存放超過 3 天 (動態計算，不只依賴後端 flag)
+    const overdue = packages.filter(p => p.status === 'Pending' && isOverdue(p.receivedTime, 3)).length;
     
     // Daily stats for chart
     const last7Days = new Map<string, number>();
@@ -33,8 +28,7 @@ export const StatsDashboard: React.FC<Props> = ({ packages, userCount }) => {
     }
     
     packages.forEach(p => {
-       const d = new Date(p.receivedTime);
-       const key = `${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
+       const key = formatDateShort(p.receivedTime);
        if (last7Days.has(key)) {
           last7Days.set(key, (last7Days.get(key) || 0) + 1);
        }
