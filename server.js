@@ -414,6 +414,50 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
     } catch (error) { res.status(500).end(); }
 });
 
+// ARCHIVING ENDPOINT
+app.get('/api/maintenance/archive/search', async (req, res) => {
+    const { query } = req.query;
+    if (!query) return res.json([]);
+
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        
+        await ensureArchiveSheet(sheets, spreadsheetId);
+        
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Archive_Packages!A:M' });
+        const rows = response.data.values || [];
+        if (rows.length <= 1) return res.json([]);
+
+        const searchLower = query.toString().toLowerCase();
+        
+        const results = rows.slice(1).filter(row => {
+            const householdId = (row[2] || '').toString().toLowerCase();
+            const recipientName = (row[9] || '').toString().toLowerCase();
+            const barcode = (row[1] || '').toString().toLowerCase();
+            return householdId.includes(searchLower) || recipientName.includes(searchLower) || barcode.includes(searchLower);
+        });
+
+        res.json(results.map(row => ({
+            packageId: row[0], 
+            barcode: row[1], 
+            householdId: row[2], 
+            status: row[3], 
+            receivedTime: row[4], 
+            pickupTime: row[5], 
+            pickupOTP: row[6], 
+            signatureDataURL: row[7], 
+            recipientName: row[9] || '', 
+            packageType: row[10] || 'general', 
+            logisticsCompany: row[11] || '', 
+            managerCode: row[12] || ''
+        })));
+    } catch (error) {
+        res.status(500).json({ error: "搜尋封存失敗" });
+    }
+});
+
 app.post('/api/maintenance/archive', async (req, res) => {
     try {
         const auth = await getAuthClient();
