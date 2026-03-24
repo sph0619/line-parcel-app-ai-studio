@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "tsc --noEmit",
     "render-build": "npm install && npm run build",
     "start": "node server.js",
     "server:dev": "node --watch server.js"
