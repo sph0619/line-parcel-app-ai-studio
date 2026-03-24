@@ -28,7 +28,7 @@ function getTaiwanTimestamp() {
   const now = new Date();
   // 增加 8 小時偏移量
   const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-  return twTime.toISOString().replace('T', ' ').substring(0, 19);
+  return twTime.toISOString().substring(0, 19); // 返回 YYYY-MM-DDTHH:mm:ss
 }
 
 app.use('/callback', middleware(lineConfig));
