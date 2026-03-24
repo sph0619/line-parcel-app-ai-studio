@@ -172,6 +172,60 @@ async function notifyUser(householdId, barcode, recipientName = null, packageTyp
   await Promise.all([...new Set(targetUsers)].map(uid => lineClient.pushMessage(uid, message)));
 }
 
+async function notifyOverdue(householdId, barcode, recipientName = null) {
+  if (!lineClient) return;
+  const auth = await getAuthClient();
+  const sheets = google.sheets({ version: 'v4', auth });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
+  const rows = response.data.values || [];
+  const targetUsers = rows.filter(row => row[1] === householdId && (recipientName ? row[2] === recipientName : true)).map(row => row[0]);
+  const message = { type: 'text', text: `⚠️ 逾期未領通知！\n\n您的包裹已存放超過 3 天，請儘速至管理室領取。\n\n戶號：${householdId}\n條碼：${barcode}` };
+  await Promise.all([...new Set(targetUsers)].map(uid => lineClient.pushMessage(uid, message)));
+}
+
+async function checkOverduePackages() {
+  try {
+    const auth = await getAuthClient();
+    const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:M' });
+    const rows = response.data.values || [];
+    const now = Date.now();
+    const overdueThreshold = 3 * 24 * 60 * 60 * 1000; // 3 days
+    const updates = [];
+    
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      const status = row[3];
+      const receivedTime = row[4];
+      const isNotified = row[8] === 'TRUE';
+      
+      if (status === 'Pending' && !isNotified && receivedTime) {
+        // Use a robust date parsing similar to frontend
+        let d = new Date(receivedTime);
+        if (isNaN(d.getTime())) {
+           // Try normalizing
+           let normalized = receivedTime.replace(/\//g, '-').replace(' ', 'T');
+           d = new Date(normalized);
+        }
+        
+        if (!isNaN(d.getTime()) && (now - d.getTime()) > overdueThreshold) {
+          updates.push({ range: `Packages!I${i + 1}`, values: [['TRUE']] });
+          const householdId = row[2];
+          const barcode = row[1];
+          const recipientName = row[9];
+          await notifyOverdue(householdId, barcode, recipientName);
+        }
+      }
+    }
+    
+    if (updates.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
+      console.log(`Updated ${updates.length} overdue packages.`);
+    }
+  } catch (e) { console.error("Overdue check failed:", e); }
+}
+
 // --- API Routes ---
 
 app.get('/api/users', async (req, res) => {
@@ -264,13 +318,28 @@ app.post('/api/users/delete', async (req, res) => {
 app.get('/api/packages', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
+    // Trigger overdue check (it's async, don't wait for it to finish to respond)
+    checkOverduePackages();
+    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
     const dataRows = rows.filter((row, idx) => idx > 0 && row[0]);
     res.json(dataRows.map(row => ({
-      packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
+      packageId: row[0], 
+      barcode: row[1], 
+      householdId: row[2], 
+      status: row[3], 
+      receivedTime: row[4], 
+      pickupTime: row[5], 
+      pickupOTP: row[6], 
+      signatureDataURL: row[7], 
+      isOverdueNotified: row[8] === 'TRUE',
+      recipientName: row[9] || '', 
+      packageType: row[10] || 'general', 
+      logisticsCompany: row[11] || '', 
+      managerCode: row[12] || ''
     })).reverse());
   } catch (error) { res.status(500).json([]); }
 });
@@ -448,6 +517,7 @@ app.get('/api/maintenance/archive/search', async (req, res) => {
             pickupTime: row[5], 
             pickupOTP: row[6], 
             signatureDataURL: row[7], 
+            isOverdueNotified: row[8] === 'TRUE',
             recipientName: row[9] || '', 
             packageType: row[10] || 'general', 
             logisticsCompany: row[11] || '', 
