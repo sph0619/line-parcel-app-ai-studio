@@ -2,15 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, Archive } from 'lucide-react';
 import { ManualPickupModal } from './ManualPickupModal';
+import { ArchiveSearch } from './ArchiveSearch';
 
 interface Props {
   packages: PackageItem[];
   onUpdate: () => void;
 }
 
-type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE';
+type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE' | 'ARCHIVE';
 type SortDir = 'asc' | 'desc' | null;
 
 export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
@@ -163,9 +164,18 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           <Database size={18} />
           系統維護
         </button>
+        <button
+          onClick={() => { setActiveTab('ARCHIVE'); setSearchTerm(''); }}
+          className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
+            activeTab === 'ARCHIVE' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Archive size={18} />
+          封存查詢
+        </button>
       </div>
 
-      {activeTab !== 'MAINTENANCE' && (
+      {activeTab !== 'MAINTENANCE' && activeTab !== 'ARCHIVE' && (
           <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
@@ -316,9 +326,15 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 </div>
             </div>
         )}
+
+        {activeTab === 'ARCHIVE' && (
+          <div className="p-6">
+            <ArchiveSearch />
+          </div>
+        )}
       </div>
       
-      {activeTab !== 'MAINTENANCE' && ((activeTab === 'PACKAGES' && filteredPackages.length === 0) || (activeTab === 'USERS' && filteredUsers.length === 0)) && !loadingUsers && (
+      {activeTab !== 'MAINTENANCE' && activeTab !== 'ARCHIVE' && ((activeTab === 'PACKAGES' && filteredPackages.length === 0) || (activeTab === 'USERS' && filteredUsers.length === 0)) && !loadingUsers && (
          <div className="p-12 text-center text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
            找不到相符的{activeTab === 'PACKAGES' ? '包裹' : '住戶'}資料
          </div>
