@@ -9,8 +9,17 @@ interface Props {
   mode: 'pickup' | 'view';
 }
 
+const parseDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const isoStr = dateStr.includes(' ') && !dateStr.includes('T') 
+    ? dateStr.replace(' ', 'T') 
+    : dateStr;
+  const date = new Date(isoStr);
+  return isNaN(date.getTime()) ? new Date(dateStr) : date;
+};
+
 const timeAgo = (dateStr: string) => {
-  const date = new Date(dateStr);
+  const date = parseDate(dateStr);
   const now = new Date();
   const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
   
