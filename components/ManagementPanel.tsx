@@ -14,6 +14,8 @@ interface Props {
 type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE' | 'ARCHIVE';
 type SortDir = 'asc' | 'desc' | null;
 
+const ITEMS_PER_PAGE = 50;
+
 export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [activeTab, setActiveTab] = useState<Tab>('PACKAGES');
   const [users, setUsers] = useState<User[]>([]);
@@ -22,6 +24,10 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [isArchiving, setIsArchiving] = useState(false);
   const [selectedPkgForManual, setSelectedPkgForManual] = useState<PackageItem | null>(null);
+  
+  // Pagination state
+  const [packagePage, setPackagePage] = useState(1);
+  const [userPage, setUserPage] = useState(1);
   
   // Sorting state for Users
   const [userSortDir, setUserSortDir] = useState<SortDir>('asc');
@@ -95,6 +101,19 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     setUserSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
   };
 
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+    setSearchTerm('');
+    setPackagePage(1);
+    setUserPage(1);
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setSearchTerm(e.target.value);
+    setPackagePage(1);
+    setUserPage(1);
+  };
+
   const filteredPackages = useMemo(() => {
     const term = searchTerm.trim().toUpperCase();
     if (!term) return packages;
@@ -133,12 +152,24 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     return result;
   }, [users, searchTerm, userSortDir]);
 
+  // Paginated Data
+  const paginatedPackages = useMemo(() => {
+    return filteredPackages.slice((packagePage - 1) * ITEMS_PER_PAGE, packagePage * ITEMS_PER_PAGE);
+  }, [filteredPackages, packagePage]);
+
+  const paginatedUsers = useMemo(() => {
+    return filteredUsers.slice((userPage - 1) * ITEMS_PER_PAGE, userPage * ITEMS_PER_PAGE);
+  }, [filteredUsers, userPage]);
+
+  const packageTotalPages = Math.ceil(filteredPackages.length / ITEMS_PER_PAGE);
+  const userTotalPages = Math.ceil(filteredUsers.length / ITEMS_PER_PAGE);
+
   return (
     <div className="space-y-6">
       {/* Tabs */}
       <div className="flex gap-4 border-b border-slate-200">
         <button
-          onClick={() => { setActiveTab('PACKAGES'); setSearchTerm(''); }}
+          onClick={() => handleTabChange('PACKAGES')}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'PACKAGES' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -147,7 +178,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           包裹管理
         </button>
         <button
-          onClick={() => { setActiveTab('USERS'); setSearchTerm(''); }}
+          onClick={() => handleTabChange('USERS')}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'USERS' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -156,7 +187,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           住戶管理
         </button>
         <button
-          onClick={() => { setActiveTab('MAINTENANCE'); setSearchTerm(''); }}
+          onClick={() => handleTabChange('MAINTENANCE')}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'MAINTENANCE' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -165,7 +196,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           系統維護
         </button>
         <button
-          onClick={() => { setActiveTab('ARCHIVE'); setSearchTerm(''); }}
+          onClick={() => handleTabChange('ARCHIVE')}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'ARCHIVE' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -183,7 +214,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 type="text"
                 placeholder={activeTab === 'PACKAGES' ? "搜尋條碼、戶號或姓名..." : "搜尋姓名或戶號..."}
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={handleSearchChange}
                 className="w-full pl-10 pr-4 py-2 border-none outline-none text-slate-700 bg-transparent"
               />
             </div>
@@ -208,7 +239,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredPackages.map((pkg) => (
+                {paginatedPackages.map((pkg) => (
                   <tr key={pkg.packageId} className="hover:bg-slate-50 group">
                     <td className="px-6 py-3">
                       <span className={`text-xs px-2 py-1 rounded-full font-bold ${
@@ -241,6 +272,32 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 ))}
               </tbody>
             </table>
+            {packageTotalPages > 1 && (
+              <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="text-xs text-slate-500">
+                  顯示第 {(packagePage - 1) * ITEMS_PER_PAGE + 1} 至 {Math.min(packagePage * ITEMS_PER_PAGE, filteredPackages.length)} 筆，共 {filteredPackages.length} 筆
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPackagePage(p => Math.max(1, p - 1))}
+                    disabled={packagePage === 1}
+                    className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
+                  >
+                    上一頁
+                  </button>
+                  <span className="text-xs font-bold text-slate-600">
+                    {packagePage} / {packageTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setPackagePage(p => Math.min(packageTotalPages, p + 1))}
+                    disabled={packagePage === packageTotalPages}
+                    className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
+                  >
+                    下一頁
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -249,6 +306,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
              {loadingUsers ? (
                <div className="p-12 flex justify-center text-blue-600"><Loader2 className="animate-spin w-8 h-8" /></div>
              ) : (
+               <>
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                     <tr>
@@ -267,7 +325,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredUsers.map((user, index) => {
+                    {paginatedUsers.map((user, index) => {
                       const identifier = user.lineId || `manual-${index}`;
                       const isProcessing = processingId === identifier;
                       
@@ -296,6 +354,33 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     })}
                   </tbody>
                 </table>
+                {userTotalPages > 1 && (
+                  <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+                    <div className="text-xs text-slate-500">
+                      顯示第 {(userPage - 1) * ITEMS_PER_PAGE + 1} 至 {Math.min(userPage * ITEMS_PER_PAGE, filteredUsers.length)} 位，共 {filteredUsers.length} 位
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setUserPage(p => Math.max(1, p - 1))}
+                        disabled={userPage === 1}
+                        className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
+                      >
+                        上一頁
+                      </button>
+                      <span className="text-xs font-bold text-slate-600">
+                        {userPage} / {userTotalPages}
+                      </span>
+                      <button
+                        onClick={() => setUserPage(p => Math.min(userTotalPages, p + 1))}
+                        disabled={userPage === userTotalPages}
+                        className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
+                      >
+                        下一頁
+                      </button>
+                    </div>
+                  </div>
+                )}
+               </>
              )}
           </div>
         )}
