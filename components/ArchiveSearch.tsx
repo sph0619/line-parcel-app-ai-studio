@@ -3,13 +3,31 @@ import { PackageItem } from '../types';
 import { packageService } from '../services/packageService';
 import { Search, Archive, Calendar, User, Hash, Loader2, ImageIcon } from 'lucide-react';
 
-const parseDate = (dateStr: string) => {
+const parseDate = (dateStr: any) => {
   if (!dateStr) return new Date();
-  const isoStr = dateStr.includes(' ') && !dateStr.includes('T') 
-    ? dateStr.replace(' ', 'T') 
-    : dateStr;
-  const date = new Date(isoStr);
-  return isNaN(date.getTime()) ? new Date(dateStr) : date;
+  if (dateStr instanceof Date) return isNaN(dateStr.getTime()) ? new Date() : dateStr;
+  const s = String(dateStr).trim();
+  if (!s || s === 'undefined' || s === 'null') return new Date();
+  let d = new Date(s);
+  if (!isNaN(d.getTime())) return d;
+  let normalized = s.replace(/\//g, '-');
+  if (normalized.includes(' ') && !normalized.includes('T')) {
+    normalized = normalized.replace(' ', 'T');
+  }
+  d = new Date(normalized);
+  if (!isNaN(d.getTime())) return d;
+  const parts = s.match(/\d+/g);
+  if (parts && parts.length >= 3) {
+    const year = parseInt(parts[0]);
+    const month = parseInt(parts[1]) - 1;
+    const day = parseInt(parts[2]);
+    const hour = parts[3] ? parseInt(parts[3]) : 0;
+    const minute = parts[4] ? parseInt(parts[4]) : 0;
+    const second = parts[5] ? parseInt(parts[5]) : 0;
+    const finalDate = new Date(year, month, day, hour, minute, second);
+    if (!isNaN(finalDate.getTime())) return finalDate;
+  }
+  return new Date();
 };
 
 const formatDateTime = (dateStr: string) => {
