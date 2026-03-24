@@ -8,8 +8,17 @@ interface Props {
 
 const ITEMS_PER_PAGE = 50;
 
+const parseDate = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const isoStr = dateStr.includes(' ') && !dateStr.includes('T') 
+    ? dateStr.replace(' ', 'T') 
+    : dateStr;
+  const date = new Date(isoStr);
+  return isNaN(date.getTime()) ? new Date(dateStr) : date;
+};
+
 const formatDateTime = (dateStr: string) => {
-  const date = new Date(dateStr);
+  const date = parseDate(dateStr);
   return date.toLocaleString('zh-TW', { 
     month: 'short', 
     day: 'numeric', 
@@ -20,7 +29,7 @@ const formatDateTime = (dateStr: string) => {
 };
 
 const formatDateShort = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const date = parseDate(dateStr);
     return `${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getDate().toString().padStart(2, '0')}`;
 }
 
@@ -41,8 +50,8 @@ export const HistoryLog: React.FC<Props> = ({ packages }) => {
         );
       })
       .sort((a, b) => {
-        const timeA = a.pickupTime ? new Date(a.pickupTime).getTime() : 0;
-        const timeB = b.pickupTime ? new Date(b.pickupTime).getTime() : 0;
+        const timeA = a.pickupTime ? parseDate(a.pickupTime).getTime() : 0;
+        const timeB = b.pickupTime ? parseDate(b.pickupTime).getTime() : 0;
         return timeB - timeA;
       });
   }, [packages, searchTerm]);
