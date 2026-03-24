@@ -117,6 +117,12 @@ export const packageService = {
     return result.count;
   },
   
+  searchArchive: async (query: string): Promise<PackageItem[]> => {
+    const response = await fetch(`${API_BASE_URL}/maintenance/archive/search?query=${encodeURIComponent(query)}`);
+    if (!response.ok) throw new Error('搜尋失敗');
+    return await response.json();
+  },
+  
   login: async (u: string, p: string): Promise<void> => {
       const r = await fetch(`${API_BASE_URL}/login`, { 
         method: 'POST', 
