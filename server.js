@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
@@ -32,6 +33,7 @@ function getTaiwanTimestamp() {
 }
 
 app.use('/callback', middleware(lineConfig));
+app.use(compression());
 app.use(express.json({ limit: '5mb' }));
 app.use(cors());
 
@@ -229,7 +231,7 @@ async function checkOverduePackages() {
 // --- API Routes ---
 
 app.get('/api/users', async (req, res) => {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
@@ -316,7 +318,7 @@ app.post('/api/users/delete', async (req, res) => {
 });
 
 app.get('/api/packages', async (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   try {
     // Trigger overdue check (it's async, don't wait for it to finish to respond)
     checkOverduePackages();
@@ -334,7 +336,8 @@ app.get('/api/packages', async (req, res) => {
       receivedTime: row[4], 
       pickupTime: row[5], 
       pickupOTP: row[6], 
-      signatureDataURL: row[7], 
+      // Don't send the full signature in the list to save bandwidth
+      signatureDataURL: row[7] ? 'HAS_SIGNATURE' : '', 
       isOverdueNotified: row[8] === 'TRUE',
       recipientName: row[9] || '', 
       packageType: row[10] || 'general', 
@@ -342,6 +345,20 @@ app.get('/api/packages', async (req, res) => {
       managerCode: row[12] || ''
     })).reverse());
   } catch (error) { res.status(500).json([]); }
+});
+
+app.get('/api/packages/:id/signature', async (req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // Signatures don't change
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:H' });
+        const rows = response.data.values || [];
+        const pkg = rows.find(r => r[0] === req.params.id);
+        if (!pkg || !pkg[7]) return res.status(404).json({ error: "找不到簽名" });
+        res.json({ signatureDataURL: pkg[7] });
+    } catch (error) { res.status(500).json({ error: "伺服器錯誤" }); }
 });
 
 app.post('/api/packages', async (req, res) => {
