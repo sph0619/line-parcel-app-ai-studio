@@ -7,6 +7,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import { Client, middleware } from '@line/bot-sdk';
+import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
@@ -24,18 +25,20 @@ const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret)
   ? new Client(lineConfig) 
   : null;
 
-// 獲取台灣時間 (UTC+8) 的格式化字串
+// --- Middleware ---
+app.use(compression());
+app.use(cors());
+
+// Notice: /callback must be before express.json() if it uses line middleware
+app.use('/callback', middleware(lineConfig));
+app.use(express.json({ limit: '5mb' }));
+
+// --- Helper Functions ---
 function getTaiwanTimestamp() {
   const now = new Date();
-  // 增加 8 小時偏移量
   const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-  return twTime.toISOString().substring(0, 19); // 返回 YYYY-MM-DDTHH:mm:ss
+  return twTime.toISOString().substring(0, 19);
 }
-
-app.use('/callback', middleware(lineConfig));
-app.use(compression());
-app.use(express.json({ limit: '5mb' }));
-app.use(cors());
 
 function validateHouseholdId(id) {
   if (!id) return false;
@@ -229,6 +232,19 @@ async function checkOverduePackages() {
 }
 
 // --- API Routes ---
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    env: {
+      GOOGLE_SHEET_ID: !!process.env.GOOGLE_SHEET_ID,
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      GOOGLE_PRIVATE_KEY: !!process.env.GOOGLE_PRIVATE_KEY,
+      LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
+      LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
+    }
+  });
+});
 
 app.get('/api/users', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
@@ -599,5 +615,27 @@ app.post('/api/maintenance/archive', async (req, res) => {
         res.json({ count: rowsToArchive.length });
     } catch (error) { res.status(500).json({ error: "歸檔失敗" }); }
 });
+
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer();
 
 export default app;
