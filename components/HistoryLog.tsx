@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PackageItem } from '../types';
-import { BadgeCheck, Image as ImageIcon, UserCircle, Hand, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BadgeCheck, Image as ImageIcon, UserCircle, Hand, Search, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { parseDate, formatDateTime, formatDateShort } from '../lib/dateUtils';
+import { packageService } from '../services/packageService';
 
 interface Props {
   packages: PackageItem[];
@@ -9,9 +10,47 @@ interface Props {
 
 const ITEMS_PER_PAGE = 50;
 
+const SignaturePreview: React.FC<{ packageId: string }> = ({ packageId }) => {
+  const [signature, setSignature] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadSignature = async () => {
+      setLoading(true);
+      try {
+        const data = await packageService.getSignature(packageId);
+        if (isMounted) setSignature(data);
+      } catch (e) {
+        if (isMounted) setError(true);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+    loadSignature();
+    return () => { isMounted = false; };
+  }, [packageId]);
+
+  return (
+    <div className="absolute bottom-full right-0 mb-3 z-50 bg-white p-3 shadow-2xl rounded-2xl border border-slate-200 min-w-[200px]">
+      <p className="text-[10px] font-bold text-slate-400 mb-2 border-b pb-1 uppercase tracking-widest">Digital Signature</p>
+      {loading ? (
+        <div className="flex justify-center py-4"><Loader2 className="animate-spin text-slate-300" size={20} /></div>
+      ) : error ? (
+        <p className="text-[10px] text-red-400 py-2">載入失敗</p>
+      ) : (
+        <img src={signature || ''} alt="Signature" className="w-full h-auto bg-slate-50 rounded" />
+      )}
+      <p className="text-[9px] text-center text-slate-300 mt-2 italic">數位簽名憑證</p>
+    </div>
+  );
+};
+
 export const HistoryLog: React.FC<Props> = ({ packages }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [hoveredPkgId, setHoveredPkgId] = useState<string | null>(null);
 
   // 1. 過濾與排序
   const filteredItems = useMemo(() => {
@@ -150,16 +189,18 @@ export const HistoryLog: React.FC<Props> = ({ packages }) => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end">
-                         {pkg.signatureDataURL && pkg.signatureDataURL.startsWith('data:image') ? (
-                           <div className="group relative">
+                         {pkg.signatureDataURL ? (
+                           <div 
+                             className="relative"
+                             onMouseEnter={() => setHoveredPkgId(pkg.packageId)}
+                             onMouseLeave={() => setHoveredPkgId(null)}
+                           >
                               <button className="p-2 hover:bg-slate-200 rounded-lg transition-colors text-slate-400">
                                  <ImageIcon size={20} />
                               </button>
-                              <div className="absolute bottom-full right-0 mb-3 hidden group-hover:block z-50 bg-white p-3 shadow-2xl rounded-2xl border border-slate-200 min-w-[200px]">
-                                <p className="text-[10px] font-bold text-slate-400 mb-2 border-b pb-1 uppercase tracking-widest">Digital Signature</p>
-                                <img src={pkg.signatureDataURL} alt="Signature" className="w-full h-auto bg-slate-50 rounded" />
-                                <p className="text-[9px] text-center text-slate-300 mt-2 italic">數位簽名憑證</p>
-                              </div>
+                              {hoveredPkgId === pkg.packageId && (
+                                <SignaturePreview packageId={pkg.packageId} />
+                              )}
                            </div>
                          ) : (
                             <span className="text-[10px] text-slate-400 italic">無簽名紀錄</span>
