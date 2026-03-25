@@ -19,11 +19,17 @@ export default function App() {
   const [userCount, setUserCount] = useState<number>(0);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [lastFetchTime, setLastFetchTime] = useState(0);
 
   // Initial data load - only if authenticated
   useEffect(() => {
     if (!isAuthenticated) return;
     
+    // 如果距離上次抓取不到 10 秒，且不是強制重新整理，則跳過
+    // (這裡 refreshTrigger 增加代表強制重新整理)
+    const now = Date.now();
+    if (now - lastFetchTime < 10000 && refreshTrigger === 0) return;
+
     const fetchData = async () => {
       setIsLoading(true);
       try {
@@ -34,6 +40,7 @@ export default function App() {
         
         setPackages(pkgData);
         setUserCount(userData.length);
+        setLastFetchTime(Date.now());
       } catch (error) {
         console.error("Failed to fetch data", error);
         triggerToast("資料連線失敗，請檢查網路或重新整理", "error");
@@ -50,9 +57,11 @@ export default function App() {
 
   const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
-    // 切換到重要分頁時自動重新整理資料
+    // 切換到重要分頁時自動重新整理資料，但限制頻率 (30秒內不重複抓取)
     if (['dashboard', 'history', 'management', 'pickup'].includes(tab)) {
-      refreshData();
+      if (Date.now() - lastFetchTime > 30000) {
+        refreshData();
+      }
     }
   };
 
