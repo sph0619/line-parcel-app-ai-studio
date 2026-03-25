@@ -129,7 +129,7 @@ export const HistoryLog: React.FC<Props> = ({ packages }) => {
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="p-6 border-b border-slate-100">
           <h3 className="font-bold text-slate-800 text-lg">歷史領取紀錄</h3>
-          <p className="text-sm text-slate-500">所有完成領取並經過驗證的包裹清單。</p>
+          <p className="text-sm text-slate-500">顯示最近 100 筆領取紀錄。如需查詢更早資料，請至「資料管理 &gt; 封存查詢」。</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
