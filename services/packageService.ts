@@ -16,8 +16,7 @@ const setPackagesToCache = (packages: PackageItem[]) => {
 export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
-      // 加入時間戳記防止瀏覽器快取
-      const response = await fetch(`${API_BASE_URL}/packages?t=${Date.now()}`);
+      const response = await fetch(`${API_BASE_URL}/packages`);
       if (!response.ok) throw new Error('網路請求失敗');
       const data = await response.json();
       return data;
@@ -25,6 +24,13 @@ export const packageService = {
       console.error("Fetch packages error:", e);
       throw e; // 向上拋出錯誤，讓 UI 層級處理
     }
+  },
+
+  getSignature: async (id: string): Promise<string> => {
+    const response = await fetch(`${API_BASE_URL}/packages/${id}/signature`);
+    if (!response.ok) throw new Error('無法載入簽名');
+    const data = await response.json();
+    return data.signatureDataURL;
   },
   
   addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
@@ -81,7 +87,7 @@ export const packageService = {
   
   getAllUsers: async (): Promise<User[]> => {
     try { 
-      const r = await fetch(`${API_BASE_URL}/users?t=${Date.now()}`); 
+      const r = await fetch(`${API_BASE_URL}/users`); 
       if (!r.ok) return [];
       return await r.json(); 
     } catch (e) { return []; }
