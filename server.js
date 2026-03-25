@@ -5,9 +5,7 @@ import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fs from 'fs';
 import { Client, middleware } from '@line/bot-sdk';
-import { createServer as createViteServer } from 'vite';
 
 dotenv.config();
 
@@ -616,13 +614,26 @@ app.post('/api/maintenance/archive', async (req, res) => {
     } catch (error) { res.status(500).json({ error: "歸檔失敗" }); }
 });
 
+// --- Export App for Vercel ---
+export default app;
+
+// --- Start Server (only if not in Vercel) ---
+if (!process.env.VERCEL) {
+  startServer();
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.error('Failed to load Vite:', e);
+    }
   } else {
     const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
@@ -635,7 +646,3 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
-
-startServer();
-
-export default app;
