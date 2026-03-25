@@ -320,15 +320,14 @@ app.post('/api/users/delete', async (req, res) => {
 app.get('/api/packages', async (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   try {
-    // Trigger overdue check (it's async, don't wait for it to finish to respond)
-    checkOverduePackages();
-    
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
     const dataRows = rows.filter((row, idx) => idx > 0 && row[0]);
-    res.json(dataRows.map(row => ({
+    
+    // 轉換資料
+    const allMapped = dataRows.map(row => ({
       packageId: row[0], 
       barcode: row[1], 
       householdId: row[2], 
@@ -336,14 +335,22 @@ app.get('/api/packages', async (req, res) => {
       receivedTime: row[4], 
       pickupTime: row[5], 
       pickupOTP: row[6], 
-      // Don't send the full signature in the list to save bandwidth
       signatureDataURL: row[7] ? 'HAS_SIGNATURE' : '', 
       isOverdueNotified: row[8] === 'TRUE',
       recipientName: row[9] || '', 
       packageType: row[10] || 'general', 
       logisticsCompany: row[11] || '', 
       managerCode: row[12] || ''
-    })).reverse());
+    }));
+
+    // 優化：只回傳所有「待領取」包裹，以及最近 100 筆「已領取」包裹
+    // 這能顯著減少 JSON 傳輸量，同時不影響儀表板統計
+    const pending = allMapped.filter(p => p.status === 'Pending');
+    const pickedUp = allMapped.filter(p => p.status === 'Picked Up')
+                             .reverse()
+                             .slice(0, 100);
+    
+    res.json([...pending, ...pickedUp]);
   } catch (error) { res.status(500).json([]); }
 });
 
@@ -369,6 +376,10 @@ app.post('/api/packages', async (req, res) => {
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
+    
+    // 只有在新增包裹時才觸發逾期檢查，減少 API 呼叫次數
+    checkOverduePackages();
+
     const existingResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const isDuplicate = (existingResp.data.values || []).some(r => r[0] === barcode && r[2] === 'Pending');
     if (isDuplicate) return res.status(409).json({ error: "此條碼已在待領清單中，請勿重複入庫" });
