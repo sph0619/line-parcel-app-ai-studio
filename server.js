@@ -141,8 +141,15 @@ async function handleUserQueryPackages(event, userId) {
         if (pendingPkgs.length === 0) return lineClient.replyMessage(event.replyToken, { type: 'text', text: `目前沒有待領取的包裹。` });
         let replyText = `待領包裹共 ${pendingPkgs.length} 件：\n`;
         pendingPkgs.forEach((pkg, index) => {
-            const date = new Date(pkg[4]);
-            replyText += `\n${index + 1}. [${date.getMonth()+1}/${date.getDate()}] ${pkg[1].slice(-5)}`;
+            const receivedTime = pkg[4];
+            let date = new Date(receivedTime);
+            if (isNaN(date.getTime()) && receivedTime) {
+                // Try normalizing
+                let normalized = receivedTime.replace(/\//g, '-').replace(' ', 'T');
+                date = new Date(normalized);
+            }
+            const dateStr = !isNaN(date.getTime()) ? `${date.getMonth() + 1}/${date.getDate()}` : '??/??';
+            replyText += `\n${index + 1}. [${dateStr}] ${pkg[1].slice(-5)}`;
         });
         return lineClient.replyMessage(event.replyToken, { type: 'text', text: replyText });
     } catch (e) { return null; }
