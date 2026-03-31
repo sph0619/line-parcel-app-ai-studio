@@ -35,7 +35,64 @@ app.use(express.json({ limit: '5mb' }));
 function getTaiwanTimestamp() {
   const now = new Date();
   const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-  return twTime.toISOString().substring(0, 19);
+  const iso = twTime.toISOString();
+  // Format as YYYY/MM/DD HH:mm:ss
+  return iso.substring(0, 10).replace(/-/g, '/') + ' ' + iso.substring(11, 19);
+}
+
+function parseSheetDate(dateStr) {
+  if (!dateStr) return new Date(NaN);
+  
+  // 1. Try standard parsing
+  let d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d;
+  
+  // 2. Try normalization (replace / with - and handle space)
+  let normalized = dateStr.toString().replace(/\//g, '-').replace(' ', 'T');
+  d = new Date(normalized);
+  if (!isNaN(d.getTime())) return d;
+  
+  // 3. Handle Chinese locale PM/AM (下午/上午)
+  if (dateStr.toString().includes('下午') || dateStr.toString().includes('上午')) {
+      let clean = dateStr.toString()
+          .replace('下午', ' ')
+          .replace('上午', ' ')
+          .replace('年', '/')
+          .replace('月', '/')
+          .replace('日', '');
+      
+      // If it was PM, we might need to adjust the hour manually if new Date still fails
+      // but usually new Date handles "2026/3/31 3:03:25" if we can get it to that
+      d = new Date(clean);
+      if (!isNaN(d.getTime())) {
+          if (dateStr.toString().includes('下午')) {
+              const hours = d.getHours();
+              if (hours < 12) d.setHours(hours + 12);
+          }
+          return d;
+      }
+  }
+
+  // 4. Try extracting numbers YYYY MM DD
+  const ymdMatch = dateStr.toString().match(/(\d{4})[/-年](\d{1,2})[/-月](\d{1,2})/);
+  if (ymdMatch) {
+    return new Date(parseInt(ymdMatch[1]), parseInt(ymdMatch[2]) - 1, parseInt(ymdMatch[3]));
+  }
+  
+  // 5. Try extracting MM DD
+  const mdMatch = dateStr.toString().match(/(\d{1,2})[/-月](\d{1,2})/);
+  if (mdMatch) {
+    const now = new Date();
+    return new Date(now.getFullYear(), parseInt(mdMatch[1]) - 1, parseInt(mdMatch[2]));
+  }
+
+  // 6. Check if it's a Google Sheets serial date (number as string)
+  if (!isNaN(dateStr) && !isNaN(parseFloat(dateStr)) && parseFloat(dateStr) > 40000) {
+    const serial = parseFloat(dateStr);
+    return new Date((serial - 25569) * 86400 * 1000);
+  }
+  
+  return new Date(NaN);
 }
 
 function validateHouseholdId(id) {
@@ -142,12 +199,7 @@ async function handleUserQueryPackages(event, userId) {
         let replyText = `待領包裹共 ${pendingPkgs.length} 件：\n`;
         pendingPkgs.forEach((pkg, index) => {
             const receivedTime = pkg[4];
-            let date = new Date(receivedTime);
-            if (isNaN(date.getTime()) && receivedTime) {
-                // Try normalizing
-                let normalized = receivedTime.replace(/\//g, '-').replace(' ', 'T');
-                date = new Date(normalized);
-            }
+            const date = parseSheetDate(receivedTime);
             const dateStr = !isNaN(date.getTime()) ? `${date.getMonth() + 1}/${date.getDate()}` : '??/??';
             replyText += `\n${index + 1}. [${dateStr}] ${pkg[1].slice(-5)}`;
         });
@@ -211,13 +263,7 @@ async function checkOverduePackages() {
       const isNotified = row[8] === 'TRUE';
       
       if (status === 'Pending' && !isNotified && receivedTime) {
-        // Use a robust date parsing similar to frontend
-        let d = new Date(receivedTime);
-        if (isNaN(d.getTime())) {
-           // Try normalizing
-           let normalized = receivedTime.replace(/\//g, '-').replace(' ', 'T');
-           d = new Date(normalized);
-        }
+        const d = parseSheetDate(receivedTime);
         
         if (!isNaN(d.getTime()) && (now - d.getTime()) > overdueThreshold) {
           updates.push({ range: `Packages!I${i + 1}`, values: [['TRUE']] });
@@ -595,10 +641,13 @@ app.post('/api/maintenance/archive', async (req, res) => {
             const status = row[3];
             const pickupTime = row[5];
             if (status === 'Picked Up' && pickupTime) {
-                const diffDays = (now - new Date(pickupTime).getTime()) / (1000 * 3600 * 24);
-                if (diffDays > retentionDays) {
-                    rowsToArchive.push(row);
-                    indicesToDelete.push(i);
+                const pDate = parseSheetDate(pickupTime);
+                if (!isNaN(pDate.getTime())) {
+                    const diffDays = (now - pDate.getTime()) / (1000 * 3600 * 24);
+                    if (diffDays > retentionDays) {
+                        rowsToArchive.push(row);
+                        indicesToDelete.push(i);
+                    }
                 }
             }
         }
