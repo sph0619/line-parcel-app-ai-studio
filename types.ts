@@ -23,6 +23,7 @@ export interface User {
   name: string;
   status: 'APPROVED' | 'PENDING';
   joinDate: string;
+  cardId?: string;
 }
 
 export interface PickupSession {
