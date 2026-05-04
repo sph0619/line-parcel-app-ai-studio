@@ -17,20 +17,13 @@ export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`);
-      if (!response.ok) throw new Error('網路請求失敗');
+      if (!response.ok) throw new Error();
       const data = await response.json();
+      setPackagesToCache(data); 
       return data;
     } catch (e) { 
-      console.error("Fetch packages error:", e);
-      throw e; // 向上拋出錯誤，讓 UI 層級處理
+      return getFallbackPackages(); 
     }
-  },
-
-  getSignature: async (id: string): Promise<string> => {
-    const response = await fetch(`${API_BASE_URL}/packages/${id}/signature`);
-    if (!response.ok) throw new Error('無法載入簽名');
-    const data = await response.json();
-    return data.signatureDataURL;
   },
   
   addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
@@ -93,6 +86,27 @@ export const packageService = {
     } catch (e) { return []; }
   },
   
+  bindCard: async (lineId: string, householdId: string, name: string, cardId: string): Promise<void> => {
+    const response = await fetch(`${API_BASE_URL}/users/bind-card`, { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lineId, householdId, name, cardId })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '綁定失敗');
+  },
+
+  verifyCard: async (cardId: string): Promise<PickupSession> => {
+    const response = await fetch(`${API_BASE_URL}/pickup/verify-card`, { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardId })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || '驗證失敗');
+    return result;
+  },
+  
   deleteUser: async (lineId: string, householdId: string, name: string): Promise<void> => { 
     const response = await fetch(`${API_BASE_URL}/users/delete`, { 
       method: 'POST',
@@ -121,12 +135,6 @@ export const packageService = {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || '歸檔失敗');
     return result.count;
-  },
-  
-  searchArchive: async (query: string): Promise<PackageItem[]> => {
-    const response = await fetch(`${API_BASE_URL}/maintenance/archive/search?query=${encodeURIComponent(query)}`);
-    if (!response.ok) throw new Error('搜尋失敗');
-    return await response.json();
   },
   
   login: async (u: string, p: string): Promise<void> => {
