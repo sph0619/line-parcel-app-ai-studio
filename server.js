@@ -1,10 +1,10 @@
 import express from 'express';
-import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import fs from 'fs';
 import { Client, middleware } from '@line/bot-sdk';
 
 dotenv.config();
@@ -23,77 +23,9 @@ const lineClient = (lineConfig.channelAccessToken && lineConfig.channelSecret)
   ? new Client(lineConfig) 
   : null;
 
-// --- Middleware ---
-app.use(compression());
-app.use(cors());
-
-// Notice: /callback must be before express.json() if it uses line middleware
 app.use('/callback', middleware(lineConfig));
 app.use(express.json({ limit: '5mb' }));
-
-// --- Helper Functions ---
-function getTaiwanTimestamp() {
-  const now = new Date();
-  const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-  const iso = twTime.toISOString();
-  // Format as YYYY/MM/DD HH:mm:ss
-  return iso.substring(0, 10).replace(/-/g, '/') + ' ' + iso.substring(11, 19);
-}
-
-function parseSheetDate(dateStr) {
-  if (!dateStr) return new Date(NaN);
-  
-  // 1. Try standard parsing
-  let d = new Date(dateStr);
-  if (!isNaN(d.getTime())) return d;
-  
-  // 2. Try normalization (replace / with - and handle space)
-  let normalized = dateStr.toString().replace(/\//g, '-').replace(' ', 'T');
-  d = new Date(normalized);
-  if (!isNaN(d.getTime())) return d;
-  
-  // 3. Handle Chinese locale PM/AM (下午/上午)
-  if (dateStr.toString().includes('下午') || dateStr.toString().includes('上午')) {
-      let clean = dateStr.toString()
-          .replace('下午', ' ')
-          .replace('上午', ' ')
-          .replace('年', '/')
-          .replace('月', '/')
-          .replace('日', '');
-      
-      // If it was PM, we might need to adjust the hour manually if new Date still fails
-      // but usually new Date handles "2026/3/31 3:03:25" if we can get it to that
-      d = new Date(clean);
-      if (!isNaN(d.getTime())) {
-          if (dateStr.toString().includes('下午')) {
-              const hours = d.getHours();
-              if (hours < 12) d.setHours(hours + 12);
-          }
-          return d;
-      }
-  }
-
-  // 4. Try extracting numbers YYYY MM DD
-  const ymdMatch = dateStr.toString().match(/(\d{4})[/-年](\d{1,2})[/-月](\d{1,2})/);
-  if (ymdMatch) {
-    return new Date(parseInt(ymdMatch[1]), parseInt(ymdMatch[2]) - 1, parseInt(ymdMatch[3]));
-  }
-  
-  // 5. Try extracting MM DD
-  const mdMatch = dateStr.toString().match(/(\d{1,2})[/-月](\d{1,2})/);
-  if (mdMatch) {
-    const now = new Date();
-    return new Date(now.getFullYear(), parseInt(mdMatch[1]) - 1, parseInt(mdMatch[2]));
-  }
-
-  // 6. Check if it's a Google Sheets serial date (number as string)
-  if (!isNaN(dateStr) && !isNaN(parseFloat(dateStr)) && parseFloat(dateStr) > 40000) {
-    const serial = parseFloat(dateStr);
-    return new Date((serial - 25569) * 86400 * 1000);
-  }
-  
-  return new Date(NaN);
-}
+app.use(cors());
 
 function validateHouseholdId(id) {
   if (!id) return false;
@@ -181,7 +113,7 @@ async function registerLineUser(lineUserId, householdId, name) {
         if (rows.some(r => r[0] === lineUserId && r[1] === householdId)) {
           return { success: false, message: "此住戶已綁定過。" };
         }
-        await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId.trim().toUpperCase(), name.trim(), getTaiwanTimestamp(), '']] } });
+        await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [[lineUserId, householdId.trim().toUpperCase(), name.trim(), new Date().toISOString(), '', '']] } });
         return { success: true };
     } catch (error) { return { success: false }; }
 }
@@ -198,10 +130,8 @@ async function handleUserQueryPackages(event, userId) {
         if (pendingPkgs.length === 0) return lineClient.replyMessage(event.replyToken, { type: 'text', text: `目前沒有待領取的包裹。` });
         let replyText = `待領包裹共 ${pendingPkgs.length} 件：\n`;
         pendingPkgs.forEach((pkg, index) => {
-            const receivedTime = pkg[4];
-            const date = parseSheetDate(receivedTime);
-            const dateStr = !isNaN(date.getTime()) ? `${date.getMonth() + 1}/${date.getDate()}` : '??/??';
-            replyText += `\n${index + 1}. [${dateStr}] ${pkg[1].slice(-5)}`;
+            const date = new Date(pkg[4]);
+            replyText += `\n${index + 1}. [${date.getMonth()+1}/${date.getDate()}] ${pkg[1].slice(-5)}`;
         });
         return lineClient.replyMessage(event.replyToken, { type: 'text', text: replyText });
     } catch (e) { return null; }
@@ -234,75 +164,13 @@ async function notifyUser(householdId, barcode, recipientName = null, packageTyp
   await Promise.all([...new Set(targetUsers)].map(uid => lineClient.pushMessage(uid, message)));
 }
 
-async function notifyOverdue(householdId, barcode, recipientName = null) {
-  if (!lineClient) return;
-  const auth = await getAuthClient();
-  const sheets = google.sheets({ version: 'v4', auth });
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:C' });
-  const rows = response.data.values || [];
-  const targetUsers = rows.filter(row => row[1] === householdId && (recipientName ? row[2] === recipientName : true)).map(row => row[0]);
-  const message = { type: 'text', text: `⚠️ 逾期未領通知！\n\n您的包裹已存放超過 3 天，請儘速至管理室領取。\n\n戶號：${householdId}\n條碼：${barcode}` };
-  await Promise.all([...new Set(targetUsers)].map(uid => lineClient.pushMessage(uid, message)));
-}
-
-async function checkOverduePackages() {
-  try {
-    const auth = await getAuthClient();
-    const sheets = google.sheets({ version: 'v4', auth });
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:M' });
-    const rows = response.data.values || [];
-    const now = Date.now();
-    const overdueThreshold = 3 * 24 * 60 * 60 * 1000; // 3 days
-    const updates = [];
-    
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const status = row[3];
-      const receivedTime = row[4];
-      const isNotified = row[8] === 'TRUE';
-      
-      if (status === 'Pending' && !isNotified && receivedTime) {
-        const d = parseSheetDate(receivedTime);
-        
-        if (!isNaN(d.getTime()) && (now - d.getTime()) > overdueThreshold) {
-          updates.push({ range: `Packages!I${i + 1}`, values: [['TRUE']] });
-          const householdId = row[2];
-          const barcode = row[1];
-          const recipientName = row[9];
-          await notifyOverdue(householdId, barcode, recipientName);
-        }
-      }
-    }
-    
-    if (updates.length > 0) {
-      await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
-      console.log(`Updated ${updates.length} overdue packages.`);
-    }
-  } catch (e) { console.error("Overdue check failed:", e); }
-}
-
 // --- API Routes ---
 
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    env: {
-      GOOGLE_SHEET_ID: !!process.env.GOOGLE_SHEET_ID,
-      GOOGLE_SERVICE_ACCOUNT_EMAIL: !!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      GOOGLE_PRIVATE_KEY: !!process.env.GOOGLE_PRIVATE_KEY,
-      LINE_CHANNEL_ACCESS_TOKEN: !!process.env.LINE_CHANNEL_ACCESS_TOKEN,
-      LINE_CHANNEL_SECRET: !!process.env.LINE_CHANNEL_SECRET,
-    }
-  });
-});
-
 app.get('/api/users', async (req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=60, stale-while-revalidate=120');
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:D' });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
         const rows = response.data.values || [];
         
         const mappedUsers = rows.map(r => {
@@ -310,6 +178,7 @@ app.get('/api/users', async (req, res) => {
             let householdId = '';
             let name = '';
             let joinDate = '';
+            let cardId = (r[5] || '').toString().trim();
 
             if (r[0] && validateHouseholdId(r[0])) {
                 householdId = r[0].toString().trim();
@@ -335,6 +204,7 @@ app.get('/api/users', async (req, res) => {
                 householdId: householdId.toUpperCase(), 
                 name, 
                 joinDate, 
+                cardId,
                 status: 'APPROVED' 
             };
         }).filter(u => u.householdId && u.householdId !== 'HOUSEHOLDID'); 
@@ -345,17 +215,36 @@ app.get('/api/users', async (req, res) => {
 
 // NEW: Delete User Endpoint
 app.post('/api/users/delete', async (req, res) => {
-    const { lineId, householdId, name } = req.body;
+...
+    } catch (error) {
+        res.status(500).json({ error: "伺服器錯誤" });
+    }
+});
+
+// NEW: Bind Card Endpoint
+app.post('/api/users/bind-card', async (req, res) => {
+    const { lineId, householdId, name, cardId } = req.body;
+    if (!cardId) return res.status(400).json({ error: "無效的卡號" });
+    
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Users!A:C' });
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Users!A:F' });
         const rows = response.data.values || [];
         
-        // Find row that matches ALL provided criteria to handle duplicates correctly
+        // 1. Check if cardId is already in use by someone else
+        const duplicateCard = rows.find(r => r[5] === cardId);
+        if (duplicateCard) {
+            // Check if it's the same person
+            const isSame = (duplicateCard[0] === (lineId || '')) && 
+                           (duplicateCard[1] === householdId) && 
+                           (duplicateCard[2] === name);
+            if (!isSame) return res.status(409).json({ error: "此感應卡已由其他住戶綁定" });
+        }
+
+        // 2. Find the user row
         const rowIndex = rows.findIndex(r => {
-            // Check based on mapping (LineId can be at 0 or empty if householdId is at 0)
             const rowLineId = (r[0] && !validateHouseholdId(r[0])) ? r[0] : '';
             const rowHId = validateHouseholdId(r[0]) ? r[0] : (validateHouseholdId(r[1]) ? r[1] : '');
             const rowName = (r[0] === rowHId) ? r[1] : (r[1] === rowHId ? r[2] : '');
@@ -367,72 +256,61 @@ app.post('/api/users/delete', async (req, res) => {
 
         if (rowIndex === -1) return res.status(404).json({ error: "找不到該用戶" });
 
-        const sheetId = await getSheetId(sheets, spreadsheetId, 'Users');
-        await sheets.spreadsheets.batchUpdate({
+        await sheets.spreadsheets.values.update({
             spreadsheetId,
-            requestBody: {
-                requests: [{
-                    deleteDimension: {
-                        range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 }
-                    }
-                }]
-            }
+            range: `Users!F${rowIndex + 1}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[cardId.toString().trim()]] }
         });
+        
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: "伺服器錯誤" });
     }
 });
 
+// NEW: Verify Card for Pickup
+app.post('/api/pickup/verify-card', async (req, res) => {
+    const { cardId } = req.body;
+    if (!cardId) return res.status(400).json({ error: "請提供卡號" });
+    
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const userResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
+        const user = (userResp.data.values || []).find(r => r[5] === cardId.toString().trim());
+        
+        if (!user) return res.status(404).json({ error: "此卡片尚未註冊" });
+        
+        const pkgResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
+        const pending = (pkgResp.data.values || []).filter(r => r[2] === user[1] && r[3] === 'Pending').map(row => ({
+            packageId: row[0], 
+            barcode: row[1], 
+            householdId: row[2], 
+            recipientName: row[9] || '', 
+            packageType: row[10] || 'general', 
+            logisticsCompany: row[11] || ''
+        }));
+        
+        if (pending.length === 0) return res.status(400).json({ error: "查無待領包裹", user: { name: user[2], householdId: user[1] } });
+        
+        res.json({ user: { name: user[2], householdId: user[1] }, packages: pending });
+    } catch (error) { 
+        res.status(500).end(); 
+    }
+});
+
 app.get('/api/packages', async (req, res) => {
-  res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
     const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:M' });
     const rows = response.data.values || [];
     const dataRows = rows.filter((row, idx) => idx > 0 && row[0]);
-    
-    // 轉換資料
-    const allMapped = dataRows.map(row => ({
-      packageId: row[0], 
-      barcode: row[1], 
-      householdId: row[2], 
-      status: row[3], 
-      receivedTime: row[4], 
-      pickupTime: row[5], 
-      pickupOTP: row[6], 
-      signatureDataURL: row[7] ? 'HAS_SIGNATURE' : '', 
-      isOverdueNotified: row[8] === 'TRUE',
-      recipientName: row[9] || '', 
-      packageType: row[10] || 'general', 
-      logisticsCompany: row[11] || '', 
-      managerCode: row[12] || ''
-    }));
-
-    // 優化：只回傳所有「待領取」包裹，以及最近 100 筆「已領取」包裹
-    // 這能顯著減少 JSON 傳輸量，同時不影響儀表板統計
-    const pending = allMapped.filter(p => p.status === 'Pending');
-    const pickedUp = allMapped.filter(p => p.status === 'Picked Up')
-                             .reverse()
-                             .slice(0, 100);
-    
-    res.json([...pending, ...pickedUp]);
+    res.json(dataRows.map(row => ({
+      packageId: row[0], barcode: row[1], householdId: row[2], status: row[3], receivedTime: row[4], pickupTime: row[5], pickupOTP: row[6], signatureDataURL: row[7], recipientName: row[9] || '', packageType: row[10] || 'general', logisticsCompany: row[11] || '', managerCode: row[12] || ''
+    })).reverse());
   } catch (error) { res.status(500).json([]); }
-});
-
-app.get('/api/packages/:id/signature', async (req, res) => {
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Signatures don't change
-    try {
-        const auth = await getAuthClient();
-        const sheets = google.sheets({ version: 'v4', auth });
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Packages!A:H' });
-        const rows = response.data.values || [];
-        const pkg = rows.find(r => r[0] === req.params.id);
-        if (!pkg || !pkg[7]) return res.status(404).json({ error: "找不到簽名" });
-        res.json({ signatureDataURL: pkg[7] });
-    } catch (error) { res.status(500).json({ error: "伺服器錯誤" }); }
 });
 
 app.post('/api/packages', async (req, res) => {
@@ -443,14 +321,10 @@ app.post('/api/packages', async (req, res) => {
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
-    
-    // 只有在新增包裹時才觸發逾期檢查，減少 API 呼叫次數
-    checkOverduePackages();
-
     const existingResp = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!B:D' });
     const isDuplicate = (existingResp.data.values || []).some(r => r[0] === barcode && r[2] === 'Pending');
     if (isDuplicate) return res.status(409).json({ error: "此條碼已在待領清單中，請勿重複入庫" });
-    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', getTaiwanTimestamp(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
+    const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', new Date().toISOString(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     await notifyUser(householdId, barcode, recipientName, packageType);
     res.json({ success: true });
@@ -516,7 +390,7 @@ app.post('/api/pickup/confirm', async (req, res) => {
         const list = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A' });
         const rows = list.data.values || [];
         const updates = [];
-        const now = getTaiwanTimestamp();
+        const now = new Date().toISOString();
         for (const pid of packageIds) {
             const idx = rows.findIndex(r => r[0] === pid);
             if (idx !== -1) {
@@ -565,7 +439,7 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         const idx = (list.data.values || []).findIndex(r => r[0] === req.params.id);
         if (idx === -1) return res.status(404).end();
         const rowNum = idx + 1;
-        const now = getTaiwanTimestamp();
+        const now = new Date().toISOString();
         const updates = [
             { range: `Packages!D${rowNum}`, values: [['Picked Up']] },
             { range: `Packages!F${rowNum}`, values: [[now]] },
@@ -576,51 +450,6 @@ app.post('/api/packages/:id/manual-pickup', async (req, res) => {
         await sheets.spreadsheets.values.batchUpdate({ spreadsheetId: process.env.GOOGLE_SHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data: updates } });
         res.json({ success: true });
     } catch (error) { res.status(500).end(); }
-});
-
-// ARCHIVING ENDPOINT
-app.get('/api/maintenance/archive/search', async (req, res) => {
-    const { query } = req.query;
-    if (!query) return res.json([]);
-
-    try {
-        const auth = await getAuthClient();
-        const sheets = google.sheets({ version: 'v4', auth });
-        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-        
-        await ensureArchiveSheet(sheets, spreadsheetId);
-        
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Archive_Packages!A:M' });
-        const rows = response.data.values || [];
-        if (rows.length <= 1) return res.json([]);
-
-        const searchLower = query.toString().toLowerCase();
-        
-        const results = rows.slice(1).filter(row => {
-            const householdId = (row[2] || '').toString().toLowerCase();
-            const recipientName = (row[9] || '').toString().toLowerCase();
-            const barcode = (row[1] || '').toString().toLowerCase();
-            return householdId.includes(searchLower) || recipientName.includes(searchLower) || barcode.includes(searchLower);
-        });
-
-        res.json(results.map(row => ({
-            packageId: row[0], 
-            barcode: row[1], 
-            householdId: row[2], 
-            status: row[3], 
-            receivedTime: row[4], 
-            pickupTime: row[5], 
-            pickupOTP: row[6], 
-            signatureDataURL: row[7], 
-            isOverdueNotified: row[8] === 'TRUE',
-            recipientName: row[9] || '', 
-            packageType: row[10] || 'general', 
-            logisticsCompany: row[11] || '', 
-            managerCode: row[12] || ''
-        })));
-    } catch (error) {
-        res.status(500).json({ error: "搜尋封存失敗" });
-    }
 });
 
 app.post('/api/maintenance/archive', async (req, res) => {
@@ -641,13 +470,10 @@ app.post('/api/maintenance/archive', async (req, res) => {
             const status = row[3];
             const pickupTime = row[5];
             if (status === 'Picked Up' && pickupTime) {
-                const pDate = parseSheetDate(pickupTime);
-                if (!isNaN(pDate.getTime())) {
-                    const diffDays = (now - pDate.getTime()) / (1000 * 3600 * 24);
-                    if (diffDays > retentionDays) {
-                        rowsToArchive.push(row);
-                        indicesToDelete.push(i);
-                    }
+                const diffDays = (now - new Date(pickupTime).getTime()) / (1000 * 3600 * 24);
+                if (diffDays > retentionDays) {
+                    rowsToArchive.push(row);
+                    indicesToDelete.push(i);
                 }
             }
         }
@@ -670,35 +496,4 @@ app.post('/api/maintenance/archive', async (req, res) => {
     } catch (error) { res.status(500).json({ error: "歸檔失敗" }); }
 });
 
-// --- Export App for Vercel ---
 export default app;
-
-// --- Start Server (only if not in Vercel) ---
-if (!process.env.VERCEL) {
-  startServer();
-}
-
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    try {
-      const { createServer: createViteServer } = await import('vite');
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      });
-      app.use(vite.middlewares);
-    } catch (e) {
-      console.error('Failed to load Vite:', e);
-    }
-  } else {
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
