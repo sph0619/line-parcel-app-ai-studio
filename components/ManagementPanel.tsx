@@ -2,19 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, Archive } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, CreditCard, X, Check } from 'lucide-react';
 import { ManualPickupModal } from './ManualPickupModal';
-import { ArchiveSearch } from './ArchiveSearch';
 
 interface Props {
   packages: PackageItem[];
   onUpdate: () => void;
 }
 
-type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE' | 'ARCHIVE';
+type Tab = 'PACKAGES' | 'USERS' | 'MAINTENANCE';
 type SortDir = 'asc' | 'desc' | null;
-
-const ITEMS_PER_PAGE = 50;
 
 export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [activeTab, setActiveTab] = useState<Tab>('PACKAGES');
@@ -25,12 +22,11 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
   const [isArchiving, setIsArchiving] = useState(false);
   const [selectedPkgForManual, setSelectedPkgForManual] = useState<PackageItem | null>(null);
   
-  // Pagination state
-  const [packagePage, setPackagePage] = useState(1);
-  const [userPage, setUserPage] = useState(1);
-  
   // Sorting state for Users
   const [userSortDir, setUserSortDir] = useState<SortDir>('asc');
+  const [bindingUser, setBindingUser] = useState<User | null>(null);
+  const [cardIdInput, setCardIdInput] = useState('');
+  const [isBinding, setIsBinding] = useState(false);
 
   useEffect(() => {
     if (activeTab === 'USERS') {
@@ -101,17 +97,31 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     setUserSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
   };
 
-  const handleTabChange = (tab: Tab) => {
-    setActiveTab(tab);
-    setSearchTerm('');
-    setPackagePage(1);
-    setUserPage(1);
+  const handleStartBind = (user: User) => {
+    setBindingUser(user);
+    setCardIdInput('');
   };
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchTerm(e.target.value);
-    setPackagePage(1);
-    setUserPage(1);
+  const submitBindCard = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!bindingUser || !cardIdInput) return;
+
+    setIsBinding(true);
+    try {
+      await packageService.bindCard(bindingUser.lineId, bindingUser.householdId, bindingUser.name, cardIdInput);
+      triggerToast('磁扣綁定成功', 'success');
+      setUsers(prev => prev.map(u => {
+        if (u.householdId === bindingUser.householdId && u.name === bindingUser.name) {
+          return { ...u, cardId: cardIdInput };
+        }
+        return u;
+      }));
+      setBindingUser(null);
+    } catch (error: any) {
+      triggerToast(error.message || '綁定失敗', 'error');
+    } finally {
+      setIsBinding(false);
+    }
   };
 
   const filteredPackages = useMemo(() => {
@@ -152,24 +162,12 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
     return result;
   }, [users, searchTerm, userSortDir]);
 
-  // Paginated Data
-  const paginatedPackages = useMemo(() => {
-    return filteredPackages.slice((packagePage - 1) * ITEMS_PER_PAGE, packagePage * ITEMS_PER_PAGE);
-  }, [filteredPackages, packagePage]);
-
-  const paginatedUsers = useMemo(() => {
-    return filteredUsers.slice((userPage - 1) * ITEMS_PER_PAGE, userPage * ITEMS_PER_PAGE);
-  }, [filteredUsers, userPage]);
-
-  const packageTotalPages = Math.ceil(filteredPackages.length / ITEMS_PER_PAGE);
-  const userTotalPages = Math.ceil(filteredUsers.length / ITEMS_PER_PAGE);
-
   return (
     <div className="space-y-6">
       {/* Tabs */}
       <div className="flex gap-4 border-b border-slate-200">
         <button
-          onClick={() => handleTabChange('PACKAGES')}
+          onClick={() => { setActiveTab('PACKAGES'); setSearchTerm(''); }}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'PACKAGES' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -178,7 +176,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           包裹管理
         </button>
         <button
-          onClick={() => handleTabChange('USERS')}
+          onClick={() => { setActiveTab('USERS'); setSearchTerm(''); }}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'USERS' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -187,7 +185,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           住戶管理
         </button>
         <button
-          onClick={() => handleTabChange('MAINTENANCE')}
+          onClick={() => { setActiveTab('MAINTENANCE'); setSearchTerm(''); }}
           className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
             activeTab === 'MAINTENANCE' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500 hover:text-slate-700'
           }`}
@@ -195,18 +193,9 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
           <Database size={18} />
           系統維護
         </button>
-        <button
-          onClick={() => handleTabChange('ARCHIVE')}
-          className={`pb-4 px-2 font-bold text-sm flex items-center gap-2 transition-all ${
-            activeTab === 'ARCHIVE' ? 'text-amber-600 border-b-2 border-amber-600' : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          <Archive size={18} />
-          封存查詢
-        </button>
       </div>
 
-      {activeTab !== 'MAINTENANCE' && activeTab !== 'ARCHIVE' && (
+      {activeTab !== 'MAINTENANCE' && (
           <div className="flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
@@ -214,7 +203,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 type="text"
                 placeholder={activeTab === 'PACKAGES' ? "搜尋條碼、戶號或姓名..." : "搜尋姓名或戶號..."}
                 value={searchTerm}
-                onChange={handleSearchChange}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border-none outline-none text-slate-700 bg-transparent"
               />
             </div>
@@ -239,7 +228,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {paginatedPackages.map((pkg) => (
+                {filteredPackages.map((pkg) => (
                   <tr key={pkg.packageId} className="hover:bg-slate-50 group">
                     <td className="px-6 py-3">
                       <span className={`text-xs px-2 py-1 rounded-full font-bold ${
@@ -272,32 +261,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 ))}
               </tbody>
             </table>
-            {packageTotalPages > 1 && (
-              <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
-                <div className="text-xs text-slate-500">
-                  顯示第 {(packagePage - 1) * ITEMS_PER_PAGE + 1} 至 {Math.min(packagePage * ITEMS_PER_PAGE, filteredPackages.length)} 筆，共 {filteredPackages.length} 筆
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPackagePage(p => Math.max(1, p - 1))}
-                    disabled={packagePage === 1}
-                    className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
-                  >
-                    上一頁
-                  </button>
-                  <span className="text-xs font-bold text-slate-600">
-                    {packagePage} / {packageTotalPages}
-                  </span>
-                  <button
-                    onClick={() => setPackagePage(p => Math.min(packageTotalPages, p + 1))}
-                    disabled={packagePage === packageTotalPages}
-                    className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
-                  >
-                    下一頁
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -306,7 +269,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
              {loadingUsers ? (
                <div className="p-12 flex justify-center text-blue-600"><Loader2 className="animate-spin w-8 h-8" /></div>
              ) : (
-               <>
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
                     <tr>
@@ -320,19 +282,56 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
+                      <th className="px-6 py-3 font-medium">磁扣卡號</th>
                       <th className="px-6 py-3 font-medium">狀態</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {paginatedUsers.map((user, index) => {
+                    {filteredUsers.map((user, index) => {
                       const identifier = user.lineId || `manual-${index}`;
                       const isProcessing = processingId === identifier;
+                      const isUserBinding = bindingUser?.householdId === user.householdId && bindingUser?.name === user.name;
                       
                       return (
                         <tr key={identifier} className="hover:bg-slate-50">
                           <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
                           <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
+                          <td className="px-6 py-3">
+                             {isUserBinding ? (
+                               <form onSubmit={submitBindCard} className="flex items-center gap-2">
+                                 <input 
+                                   autoFocus
+                                   value={cardIdInput}
+                                   onChange={e => setCardIdInput(e.target.value)}
+                                   placeholder="請感應卡片..."
+                                   className="text-xs border border-blue-300 px-2 py-1 rounded w-32 outline-none bg-blue-50 focus:ring-1 ring-blue-400"
+                                 />
+                                 <button type="submit" disabled={isBinding} className="text-blue-600 hover:text-blue-800">
+                                   {isBinding ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                                 </button>
+                                 <button type="button" onClick={() => setBindingUser(null)} className="text-slate-400 hover:text-slate-600">
+                                   <X size={14} />
+                                 </button>
+                               </form>
+                             ) : (
+                               <div className="flex items-center gap-2">
+                                 <span className="font-mono text-xs text-slate-500">
+                                   {user.cardId || <span className="text-slate-300 font-sans">尚未綁定</span>}
+                                 </span>
+                                 {!user.cardId && (
+                                   <button onClick={() => handleStartBind(user)} className="p-1 text-slate-300 hover:text-blue-500 transition-colors">
+                                     <CreditCard size={14} />
+                                   </button>
+                                 )}
+                                 {user.cardId && (
+                                   <button onClick={() => handleStartBind(user)} className="p-1 text-blue-300 hover:text-blue-500 transition-colors" title="更改磁扣">
+                                     <RefreshCw size={12} />
+                                   </button>
+                                 )}
+                               </div>
+                             )}
+                          </td>
                           <td className="px-6 py-3">
                              {user.lineId ? (
                                <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 已綁定</span>
@@ -354,33 +353,6 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                     })}
                   </tbody>
                 </table>
-                {userTotalPages > 1 && (
-                  <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
-                    <div className="text-xs text-slate-500">
-                      顯示第 {(userPage - 1) * ITEMS_PER_PAGE + 1} 至 {Math.min(userPage * ITEMS_PER_PAGE, filteredUsers.length)} 位，共 {filteredUsers.length} 位
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setUserPage(p => Math.max(1, p - 1))}
-                        disabled={userPage === 1}
-                        className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
-                      >
-                        上一頁
-                      </button>
-                      <span className="text-xs font-bold text-slate-600">
-                        {userPage} / {userTotalPages}
-                      </span>
-                      <button
-                        onClick={() => setUserPage(p => Math.min(userTotalPages, p + 1))}
-                        disabled={userPage === userTotalPages}
-                        className="px-3 py-1 border border-slate-200 rounded-lg text-xs hover:bg-white disabled:opacity-30"
-                      >
-                        下一頁
-                      </button>
-                    </div>
-                  </div>
-                )}
-               </>
              )}
           </div>
         )}
@@ -411,15 +383,9 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                 </div>
             </div>
         )}
-
-        {activeTab === 'ARCHIVE' && (
-          <div className="p-6">
-            <ArchiveSearch />
-          </div>
-        )}
       </div>
       
-      {activeTab !== 'MAINTENANCE' && activeTab !== 'ARCHIVE' && ((activeTab === 'PACKAGES' && filteredPackages.length === 0) || (activeTab === 'USERS' && filteredUsers.length === 0)) && !loadingUsers && (
+      {activeTab !== 'MAINTENANCE' && ((activeTab === 'PACKAGES' && filteredPackages.length === 0) || (activeTab === 'USERS' && filteredUsers.length === 0)) && !loadingUsers && (
          <div className="p-12 text-center text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
            找不到相符的{activeTab === 'PACKAGES' ? '包裹' : '住戶'}資料
          </div>
