@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, CreditCard, X, Check } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, CreditCard, X, Check, ShieldCheck } from 'lucide-react';
 import { ManualPickupModal } from './ManualPickupModal';
 
 interface Props {
@@ -282,7 +282,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
-                      <th className="px-6 py-3 font-medium">磁扣卡號</th>
+                      <th className="px-6 py-3 font-medium">磁扣驗證</th>
                       <th className="px-6 py-3 font-medium">狀態</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
@@ -316,17 +316,24 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                                </form>
                              ) : (
                                <div className="flex items-center gap-2">
-                                 <span className="font-mono text-xs text-slate-500">
-                                   {user.cardId || <span className="text-slate-300 font-sans">尚未綁定</span>}
-                                 </span>
-                                 {!user.cardId && (
-                                   <button onClick={() => handleStartBind(user)} className="p-1 text-slate-300 hover:text-blue-500 transition-colors">
-                                     <CreditCard size={14} />
-                                   </button>
-                                 )}
-                                 {user.cardId && (
-                                   <button onClick={() => handleStartBind(user)} className="p-1 text-blue-300 hover:text-blue-500 transition-colors" title="更改磁扣">
-                                     <RefreshCw size={12} />
+                                 {user.cardId ? (
+                                   <div className="flex items-center gap-2">
+                                      <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-bold flex items-center gap-1">
+                                        <ShieldCheck size={10} /> 已綁定
+                                      </span>
+                                      <button onClick={() => handleStartBind(user)} className="p-1 text-slate-300 hover:text-blue-500 transition-colors" title="更換磁扣">
+                                        <RefreshCw size={12} />
+                                      </button>
+                                   </div>
+                                 ) : (
+                                   <button 
+                                      onClick={() => handleStartBind(user)} 
+                                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-600 transition-all group"
+                                   >
+                                      <div className="p-1 rounded bg-slate-50 group-hover:bg-blue-50">
+                                        <CreditCard size={14} />
+                                      </div>
+                                      <span>點擊綁定</span>
                                    </button>
                                  )}
                                </div>
