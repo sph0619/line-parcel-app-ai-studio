@@ -215,7 +215,39 @@ app.get('/api/users', async (req, res) => {
 
 // NEW: Delete User Endpoint
 app.post('/api/users/delete', async (req, res) => {
-...
+    const { lineId, householdId, name } = req.body;
+    try {
+        const auth = await getAuthClient();
+        const sheets = google.sheets({ version: 'v4', auth });
+        const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'Users!A:F' });
+        const rows = response.data.values || [];
+        
+        // Find row that matches ALL provided criteria to handle duplicates correctly
+        const rowIndex = rows.findIndex(r => {
+            const rowLineId = (r[0] && !validateHouseholdId(r[0])) ? r[0] : '';
+            const rowHId = validateHouseholdId(r[0]) ? r[0] : (validateHouseholdId(r[1]) ? r[1] : '');
+            const rowName = (r[0] === rowHId) ? r[1] : (r[1] === rowHId ? r[2] : '');
+
+            return (rowLineId === (lineId || '')) && 
+                   (rowHId.toString().toUpperCase() === householdId.toString().toUpperCase()) && 
+                   (rowName.toString() === name.toString());
+        });
+
+        if (rowIndex === -1) return res.status(404).json({ error: "找不到該用戶" });
+
+        const sheetId = await getSheetId(sheets, spreadsheetId, 'Users');
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{
+                    deleteDimension: {
+                        range: { sheetId, dimension: 'ROWS', startIndex: rowIndex, endIndex: rowIndex + 1 }
+                    }
+                }]
+            }
+        });
+        res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: "伺服器錯誤" });
     }
