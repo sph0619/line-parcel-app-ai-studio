@@ -23,18 +23,19 @@ export interface User {
   name: string;
   status: 'APPROVED' | 'PENDING';
   joinDate: string;
-  cardId?: string;
+  rfidTag?: string; // New field for IC tag
 }
 
 export interface PickupSession {
   user: {
     name: string;
     householdId: string;
+    rfidTag?: string;
   };
   packages: PackageItem[];
 }
 
-export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management' | 'guide';
+export type TabType = 'dashboard' | 'checkin' | 'pickup' | 'history' | 'management' | 'guide' | 'rfid_bind';
 
 export interface DailyStat {
   date: string;
