@@ -17,13 +17,20 @@ export const packageService = {
   getPackages: async (): Promise<PackageItem[]> => {
     try {
       const response = await fetch(`${API_BASE_URL}/packages`);
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw new Error('網路請求失敗');
       const data = await response.json();
-      setPackagesToCache(data); 
       return data;
     } catch (e) { 
-      return getFallbackPackages(); 
+      console.error("Fetch packages error:", e);
+      throw e; // 向上拋出錯誤，讓 UI 層級處理
     }
+  },
+
+  getSignature: async (id: string): Promise<string> => {
+    const response = await fetch(`${API_BASE_URL}/packages/${id}/signature`);
+    if (!response.ok) throw new Error('無法載入簽名');
+    const data = await response.json();
+    return data.signatureDataURL;
   },
   
   addPackage: async (householdId: string, barcode: string, recipientName?: string, packageType: PackageType = 'general', logisticsCompany: string = ''): Promise<PackageItem> => {
@@ -51,6 +58,19 @@ export const packageService = {
     if (!response.ok) throw new Error(result.error || '發送失敗');
   },
 
+  verifyRFID: async (rfidTag: string): Promise<PickupSession> => {
+    const response = await fetch(`${API_BASE_URL}/pickup/rfid-verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rfidTag }),
+    });
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || '驗證失敗');
+    }
+    return await response.json();
+  },
+
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
     const response = await fetch(`${API_BASE_URL}/pickup/verify`, { 
       method: 'POST', 
@@ -69,11 +89,11 @@ export const packageService = {
     await packageService.confirmBatchPickup([packageId], signature, managerCode);
   },
 
-  confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string): Promise<void> => {
+  confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string, rfidVerified?: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/pickup/confirm`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode }), 
+      body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode, rfidVerified }), 
     });
     if (!response.ok) throw new Error('提交失敗');
   },
@@ -86,25 +106,23 @@ export const packageService = {
     } catch (e) { return []; }
   },
   
-  bindCard: async (lineId: string, householdId: string, name: string, cardId: string): Promise<void> => {
-    const response = await fetch(`${API_BASE_URL}/users/bind-card`, { 
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lineId, householdId, name, cardId })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || '綁定失敗');
+  searchUsers: async (query: string): Promise<User[]> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/search?query=${encodeURIComponent(query)}`);
+      if (!response.ok) return [];
+      return await response.json();
+    } catch (e) { return []; }
   },
 
-  verifyCard: async (cardId: string): Promise<PickupSession> => {
-    const response = await fetch(`${API_BASE_URL}/pickup/verify-card`, { 
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cardId })
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || '驗證失敗');
-    return result;
+  bindRFID: async (householdId: string, name: string, rfidTag: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/bind-rfid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ householdId, name, rfidTag }),
+      });
+      return response.ok;
+    } catch (e) { return false; }
   },
   
   deleteUser: async (lineId: string, householdId: string, name: string): Promise<void> => { 
@@ -135,6 +153,12 @@ export const packageService = {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || '歸檔失敗');
     return result.count;
+  },
+  
+  searchArchive: async (query: string): Promise<PackageItem[]> => {
+    const response = await fetch(`${API_BASE_URL}/maintenance/archive/search?query=${encodeURIComponent(query)}`);
+    if (!response.ok) throw new Error('搜尋失敗');
+    return await response.json();
   },
   
   login: async (u: string, p: string): Promise<void> => {
