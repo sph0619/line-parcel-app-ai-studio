@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { PackageItem, PickupSession } from '../types';
 import { ShieldCheck, Search, CheckSquare, Square, PenTool, CheckCircle, Loader2, User, AlertCircle, RefreshCw, BadgeCheck, Lock, CreditCard } from 'lucide-react';
 import { SignaturePad } from './SignaturePad';
@@ -10,82 +10,111 @@ interface Props {
 }
 
 type Step = 'INPUT_OTP' | 'INTERACTION' | 'SUCCESS';
+type AuthMethod = 'OTP' | 'RFID';
 
 export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
   const [step, setStep] = useState<Step>('INPUT_OTP');
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('OTP');
   const [otp, setOtp] = useState('');
+  const [rfidValue, setRfidValue] = useState('');
   const [managerCode, setManagerCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<PickupSession | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [signature, setSignature] = useState('');
-  const [isCardAuth, setIsCardAuth] = useState(false);
+  const [rfidConfirmValue, setRfidConfirmValue] = useState('');
   
-  const rfidBuffer = useRef<string>('');
-  const lastKeyTime = useRef<number>(0);
+  const rfidInputRef = useRef<HTMLInputElement>(null);
+  const rfidConfirmInputRef = useRef<HTMLInputElement>(null);
 
-  // Focus management for RFID scanning
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Only listen on the first step
-      if (step !== 'INPUT_OTP') return;
-      
-      const now = Date.now();
-      // Most RFID readers send keys very fast (< 50ms interval)
-      if (now - lastKeyTime.current > 100 && e.key !== 'Enter') {
-        rfidBuffer.current = '';
-      }
-      lastKeyTime.current = now;
-
-      if (e.key === 'Enter') {
-        if (rfidBuffer.current.length >= 4) {
-          handleCardVerify(rfidBuffer.current);
-          rfidBuffer.current = '';
-        }
-      } else if (/^\d$/.test(e.key)) {
-        rfidBuffer.current += e.key;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [step]);
-
-  const handleCardVerify = async (cardId: string) => {
-    setLoading(true);
-    try {
-        const data = await packageService.verifyCard(cardId);
-        setSession(data);
-        setIsCardAuth(true);
-        setSelectedIds(new Set(data.packages.map(p => p.packageId)));
-        setSignature('RFID_AUTHENTICATED'); // Special value for card auth
-        setStep('INTERACTION');
-        triggerToast(`感應成功：${data.user.householdId} ${data.user.name}`, 'success');
-    } catch (err: any) {
-        triggerToast(err.message || '磁扣驗證失敗', 'error');
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  const handleVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (otp.length !== 4) {
+  const handleVerify = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (authMethod === 'OTP' && otp.length !== 4) {
         triggerToast('請輸入 4 位數驗證碼', 'error');
         return;
     }
+    if (authMethod === 'RFID' && !rfidValue) return;
+
     setLoading(true);
     try {
-        const data = await packageService.verifyPickupOTP(otp);
+        let data;
+        if (authMethod === 'OTP') {
+            data = await packageService.verifyPickupOTP(otp);
+        } else {
+            data = await packageService.verifyRFID(rfidValue);
+        }
         setSession(data);
         setSelectedIds(new Set(data.packages.map(p => p.packageId)));
         setStep('INTERACTION');
     } catch (err: any) {
-        triggerToast(err.message || '驗證碼無效或過期', 'error');
+        triggerToast(err.message || '驗證失敗，查無資料或已過期', 'error');
+        setRfidValue('');
     } finally {
         setLoading(false);
     }
   };
+
+  const handleRFIDConfirm = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!rfidConfirmValue || !session) return;
+    
+    if (rfidConfirmValue.trim() !== session.user.rfidTag?.trim()) {
+      triggerToast('磁扣內容不符，請感應同一張磁扣', 'error');
+      setRfidConfirmValue('');
+      return;
+    }
+    
+    handleSubmit(true);
+  };
+
+  const handleSubmit = async (isRFID = false) => {
+      if (selectedIds.size === 0) {
+          triggerToast('請選擇要領取的包裹', 'error');
+          return;
+      }
+      if (managerCode.length !== 4) {
+          triggerToast('請輸入 4 位數承辦人代碼', 'error');
+          return;
+      }
+      if (!signature && !isRFID) {
+          triggerToast('請住戶簽名以供存查', 'error');
+          return;
+      }
+      setLoading(true);
+      try {
+          await packageService.confirmBatchPickup(
+            Array.from(selectedIds), 
+            isRFID ? '' : signature, 
+            managerCode,
+            isRFID ? rfidConfirmValue : undefined
+          );
+          triggerToast(`成功領取 ${selectedIds.size} 件包裹`, 'success');
+          setStep('SUCCESS');
+          onSuccess();
+      } catch (err: any) {
+          triggerToast(err.message || '提交失敗，請檢查代碼或網路', 'error');
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  const resetFlow = () => {
+      setStep('INPUT_OTP');
+      setAuthMethod('OTP');
+      setOtp('');
+      setRfidValue('');
+      setRfidConfirmValue('');
+      setManagerCode('');
+      setSession(null);
+      setSelectedIds(new Set());
+      setSignature('');
+  };
+
+  useEffect(() => {
+    if (step === 'INPUT_OTP' && authMethod === 'RFID') {
+      rfidInputRef.current?.focus();
+    }
+  }, [step, authMethod]);
 
   const togglePackage = (id: string) => {
       const newSet = new Set(selectedIds);
@@ -103,62 +132,46 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
       }
   };
 
-  const handleSubmit = async () => {
-      if (selectedIds.size === 0) {
-          triggerToast('請選擇要領取的包裹', 'error');
-          return;
-      }
-      if (managerCode.length !== 4) {
-          triggerToast('請輸入 4 位數承辦人代碼', 'error');
-          return;
-      }
-      if (!signature) {
-          triggerToast('請住戶簽名以供存查', 'error');
-          return;
-      }
-      setLoading(true);
-      try {
-          await packageService.confirmBatchPickup(Array.from(selectedIds), signature, managerCode);
-          triggerToast(`成功領取 ${selectedIds.size} 件包裹`, 'success');
-          setStep('SUCCESS');
-          onSuccess();
-      } catch (err: any) {
-          triggerToast(err.message || '提交失敗，請檢查代碼或網路', 'error');
-      } finally {
-          setLoading(false);
-      }
-  };
-
-  const resetFlow = () => {
-      setStep('INPUT_OTP');
-      setOtp('');
-      setManagerCode('');
-      setSession(null);
-      setSelectedIds(new Set());
-      setSignature('');
-      setIsCardAuth(false);
-  };
-
   if (step === 'INPUT_OTP') {
       return (
           <div className="max-w-md mx-auto mt-10">
               <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-center">
-                  <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                      <ShieldCheck size={32} className="text-blue-600" />
+                  <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-8">
+                    <button 
+                      onClick={() => setAuthMethod('OTP')}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${authMethod === 'OTP' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      驗證碼(OTP)
+                    </button>
+                    <button 
+                      onClick={() => setAuthMethod('RFID')}
+                      className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${authMethod === 'RFID' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                    >
+                      磁扣感應
+                    </button>
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">領取包裹驗證</h2>
-                  <p className="text-slate-500 mb-8">請輸入 4 位數驗證碼 或 直接感應磁扣</p>
-                  <form onSubmit={handleVerify}>
-                      <input
-                          type="text"
-                          maxLength={4}
-                          value={otp}
-                          onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                          className="w-full text-center text-4xl tracking-[0.5em] font-mono border-2 border-slate-200 rounded-xl py-4 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all mb-6"
-                          placeholder="----"
-                          autoFocus
-                      />
-                      <div className="flex flex-col gap-4">
+
+                  <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                      {authMethod === 'OTP' ? <ShieldCheck size={32} className="text-blue-600" /> : <CreditCard size={32} className="text-blue-600" />}
+                  </div>
+                  <h2 className="text-2xl font-bold text-slate-800 mb-2">
+                    {authMethod === 'OTP' ? '領取包裹驗證' : '住戶磁扣感應'}
+                  </h2>
+                  <p className="text-slate-500 mb-8">
+                    {authMethod === 'OTP' ? '請輸入住戶 Line 收到的 4 位數驗證碼' : '請將住戶磁扣靠近感應器'}
+                  </p>
+                  
+                  {authMethod === 'OTP' ? (
+                    <form onSubmit={handleVerify}>
+                        <input
+                            type="text"
+                            maxLength={4}
+                            value={otp}
+                            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                            className="w-full text-center text-4xl tracking-[0.5em] font-mono border-2 border-slate-200 rounded-xl py-4 focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all mb-6"
+                            placeholder="----"
+                            autoFocus
+                        />
                         <button
                             type="submit"
                             disabled={loading || otp.length !== 4}
@@ -167,12 +180,29 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
                             {loading ? <Loader2 className="animate-spin" /> : <Search size={20} />}
                             查詢包裹清單
                         </button>
-                        <div className="flex items-center gap-2 justify-center text-slate-400 text-sm py-2">
-                           <CreditCard size={16} className="animate-pulse" />
-                           <span>等待磁扣感應中...</span>
+                    </form>
+                  ) : (
+                    <div className="space-y-6">
+                        <input
+                            ref={rfidInputRef}
+                            type="text"
+                            className="w-full text-center text-2xl tracking-widest font-mono border-2 border-blue-100 rounded-xl py-4 focus:border-blue-500 bg-slate-50 outline-none"
+                            placeholder="等待感應..."
+                            value={rfidValue}
+                            onChange={(e) => setRfidValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && rfidValue) {
+                                handleVerify();
+                              }
+                            }}
+                            autoFocus
+                        />
+                        <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
+                          <Loader2 size={14} className="animate-spin" />
+                          正在等待讀卡器輸入...
                         </div>
-                      </div>
-                  </form>
+                    </div>
+                  )}
               </div>
           </div>
       );
@@ -184,16 +214,20 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
               <div className="bg-emerald-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
                   <CheckCircle size={40} className="text-emerald-600" />
               </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2">領取完成</h2>
-              <p className="text-slate-500 mb-8">感謝您的服務，領取記錄已成功存檔。</p>
-              <button onClick={resetFlow} className="bg-slate-800 text-white px-8 py-3 rounded-xl font-bold hover:bg-slate-900 transition-all">回到首頁</button>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">領取成功！</h2>
+              <p className="text-slate-500 mb-8">包裹已完成領取登記，可放行住戶。</p>
+              <button
+                  onClick={resetFlow}
+                  className="w-full bg-slate-800 hover:bg-slate-900 text-white py-4 rounded-xl font-bold transition-all"
+              >
+                  回首頁
+              </button>
           </div>
       );
   }
 
   return (
       <div className="max-w-5xl mx-auto space-y-6 pb-20">
-          {/* Header Info */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4">
               <div className="flex items-center gap-4">
                   <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-xl">{session?.user.householdId.slice(0, 2)}</div>
@@ -206,7 +240,6 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Package Selection */}
               <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
                   <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                       <h4 className="font-bold text-slate-700 flex items-center gap-2"><CheckSquare size={18}/> 選擇領取項目</h4>
@@ -235,7 +268,6 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
                   </div>
               </div>
 
-              {/* Manager Auth Side Area */}
               <div className="space-y-6">
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                       <div className="flex items-center gap-2 mb-4 text-slate-800">
@@ -264,29 +296,33 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
                           <p className="text-blue-100 text-xs uppercase font-bold tracking-widest">待領總數</p>
                           <p className="text-5xl font-black mt-1">{selectedIds.size}</p>
                       </div>
-                      <p className="text-xs text-blue-100 text-center leading-relaxed">請確保已核對住戶身份，並引導住戶在下方大區域完成簽名後點擊確認。</p>
+                      <p className="text-xs text-blue-100 text-center leading-relaxed">請確保已核對住戶身份，並使用{authMethod === 'OTP' ? '簽名' : '磁扣二次感應'}完成領取。</p>
                   </div>
               </div>
           </div>
 
-          {/* Expanded Signature Area at Bottom */}
           <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 space-y-6">
               <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-slate-800">
-                      <PenTool size={24} className="text-blue-600" />
-                      <h4 className="font-bold text-xl">住戶電子簽名</h4>
+                      {authMethod === 'OTP' ? (
+                        <>
+                          <PenTool size={24} className="text-blue-600" />
+                          <h4 className="font-bold text-xl">住戶電子簽名</h4>
+                        </>
+                      ) : (
+                        <>
+                          <CreditCard size={24} className="text-blue-600" />
+                          <h4 className="font-bold text-xl">磁扣二次感應確認</h4>
+                        </>
+                      )}
                   </div>
-                  {isCardAuth ? (
-                    <div className="flex items-center gap-2 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full border border-emerald-100 animate-bounce">
-                       <ShieldCheck size={16} />
-                       <span className="text-xs font-bold uppercase tracking-wider">磁扣驗證成功：免簽名</span>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-slate-400 flex items-center gap-1"><AlertCircle size={14}/> 簽名後將自動存檔作為領取憑證</div>
-                  )}
+                  <div className="text-xs text-slate-400 flex items-center gap-1">
+                    <AlertCircle size={14}/> 
+                    {authMethod === 'OTP' ? '簽名後將自動存檔作為領取憑證' : '請住戶再次持磁扣靠近感應器以確認領取'}
+                  </div>
               </div>
               
-              {!isCardAuth ? (
+              {authMethod === 'OTP' ? (
                 <div className="w-full h-64 border-2 border-dashed border-slate-200 rounded-2xl overflow-hidden bg-slate-50 relative group">
                     <SignaturePad 
                         width={960} 
@@ -295,21 +331,33 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
                     />
                 </div>
               ) : (
-                <div className="w-full h-64 border-2 border-dashed border-emerald-200 rounded-2xl flex flex-col items-center justify-center bg-emerald-50/30 text-emerald-600 gap-4">
-                   <div className="p-6 bg-white rounded-full shadow-lg shadow-emerald-900/5">
-                      <BadgeCheck size={64} />
-                   </div>
-                   <div className="text-center">
-                      <p className="font-bold text-xl">已通過安全磁扣驗證</p>
-                      <p className="text-sm opacity-70">此方式已具備法律效力，無需重複簽名</p>
-                   </div>
+                <div className="w-full py-12 flex flex-col items-center justify-center border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/20">
+                    <input
+                      ref={rfidConfirmInputRef}
+                      type="text"
+                      className="opacity-0 absolute"
+                      onBlur={() => rfidConfirmInputRef.current?.focus()}
+                      autoFocus
+                      value={rfidConfirmValue}
+                      onChange={(e) => setRfidConfirmValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && rfidConfirmValue) {
+                          handleRFIDConfirm();
+                        }
+                      }}
+                    />
+                    <div className="animate-pulse bg-blue-100 p-6 rounded-full mb-4">
+                      <CreditCard size={48} className="text-blue-600" />
+                    </div>
+                    <p className="text-lg font-bold text-blue-800">請感應磁扣確認</p>
+                    <p className="text-sm text-slate-500 mt-2">已選項目: {selectedIds.size} 件</p>
                 </div>
               )}
 
               <div className="flex gap-4">
                   <button
-                      onClick={handleSubmit}
-                      disabled={!signature || !managerCode || selectedIds.size === 0 || loading}
+                      onClick={() => handleSubmit(authMethod === 'RFID')}
+                      disabled={(authMethod === 'OTP' && !signature) || !managerCode || selectedIds.size === 0 || loading}
                       className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white py-4 rounded-2xl font-black text-xl flex items-center justify-center gap-3 shadow-xl shadow-blue-500/20 transition-all active:scale-95"
                   >
                       {loading ? <Loader2 className="animate-spin" /> : <CheckCircle size={24} />}
