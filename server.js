@@ -400,12 +400,16 @@ app.post('/api/users/bind-rfid', async (req, res) => {
     const { householdId, name, rfidTag } = req.body;
     if (!householdId || !name || !rfidTag) return res.status(400).json({ error: "缺少必要參數" });
     
+    const cleanTag = rfidTag.trim();
+    if (!cleanTag) return res.status(400).json({ error: "磁扣號碼不可為空" });
+
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
         const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
         const rows = response.data.values || [];
         
+        // FIND existing user to update
         const idx = rows.findIndex(r => {
             const rHId = (r[1] && validateHouseholdId(r[1])) ? r[1] : r[0];
             const rName = (r[1] && validateHouseholdId(r[1])) ? r[2] : r[1];
@@ -414,17 +418,36 @@ app.post('/api/users/bind-rfid', async (req, res) => {
         });
         
         if (idx === -1) return res.status(404).json({ error: "找不到住戶" });
+
+        // DUPLICATE CHECK: See if this tag is already bound to ANOTHER user
+        const duplicateIdx = rows.findIndex((r, i) => {
+            if (i === 0) return false; // Skip header
+            if (i === idx) return false; // Skip the user we are currently updating
+            
+            // RFID can be in index 4 or 5
+            const tag = (r[5] || r[4] || '').toString().trim();
+            return tag === cleanTag;
+        });
+
+        if (duplicateIdx !== -1) {
+            const dupRow = rows[duplicateIdx];
+            const dupHId = (dupRow[1] && validateHouseholdId(dupRow[1])) ? dupRow[1] : dupRow[0];
+            return res.status(400).json({ error: `此磁扣已由戶號 ${dupHId} 綁定，請先解除該戶綁定或更換磁扣` });
+        }
         
         const col = (rows[idx][1] && validateHouseholdId(rows[idx][1])) ? 'F' : 'E';
         await sheets.spreadsheets.values.update({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: `Users!${col}${idx + 1}`,
             valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[rfidTag.trim()]] }
+            requestBody: { values: [[cleanTag]] }
         });
         
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ error: "綁定失敗" }); }
+    } catch (error) { 
+        console.error("Bind RFID error:", error);
+        res.status(500).json({ error: "綁定失敗" }); 
+    }
 });
 
 // NEW: Delete User Endpoint
