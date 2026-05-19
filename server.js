@@ -398,10 +398,9 @@ app.get('/api/users/search', async (req, res) => {
 // NEW: Bind RFID Endpoint
 app.post('/api/users/bind-rfid', async (req, res) => {
     const { householdId, name, rfidTag } = req.body;
-    if (!householdId || !name || !rfidTag) return res.status(400).json({ error: "缺少必要參數" });
+    if (!householdId || !name) return res.status(400).json({ error: "缺少必要參數" });
     
-    const cleanTag = rfidTag.trim();
-    if (!cleanTag) return res.status(400).json({ error: "磁扣號碼不可為空" });
+    const cleanTag = (rfidTag || '').trim();
 
     try {
         const auth = await getAuthClient();
@@ -420,26 +419,28 @@ app.post('/api/users/bind-rfid', async (req, res) => {
         if (idx === -1) return res.status(404).json({ error: "找不到住戶" });
 
         // DUPLICATE CHECK: See if this tag is already bound to ANOTHER user
-        const duplicateIdx = rows.findIndex((r, i) => {
-            if (i === 0) return false; // Skip header
-            if (i === idx) return false; // Skip the user we are currently updating
-            
-            // RFID can be in index 4 or 5
-            const tag = (r[5] || r[4] || '').toString().trim();
-            return tag === cleanTag;
-        });
+        if (cleanTag) {
+            const duplicateIdx = rows.findIndex((r, i) => {
+                if (i === 0) return false; // Skip header
+                if (i === idx) return false; // Skip the user we are currently updating
+                
+                // RFID can be in index 4 or 5
+                const tag = (r[5] || r[4] || '').toString().trim();
+                return tag === cleanTag;
+            });
 
-        if (duplicateIdx !== -1) {
-            const dupRow = rows[duplicateIdx];
-            const dupHId = (dupRow[1] && validateHouseholdId(dupRow[1])) ? dupRow[1] : dupRow[0];
-            return res.status(400).json({ error: `此磁扣已由戶號 ${dupHId} 綁定，請先解除該戶綁定或更換磁扣` });
+            if (duplicateIdx !== -1) {
+                const dupRow = rows[duplicateIdx];
+                const dupHId = (dupRow[1] && validateHouseholdId(dupRow[1])) ? dupRow[1] : dupRow[0];
+                return res.status(400).json({ error: `此磁扣已由戶號 ${dupHId} 綁定，請先解除該戶綁定或更換磁扣` });
+            }
         }
         
         const col = (rows[idx][1] && validateHouseholdId(rows[idx][1])) ? 'F' : 'E';
         await sheets.spreadsheets.values.update({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: `Users!${col}${idx + 1}`,
-            valueInputOption: 'USER_ENTERED',
+            valueInputOption: 'RAW',
             requestBody: { values: [[cleanTag]] }
         });
         
