@@ -166,12 +166,48 @@ export const RFIDBinding: React.FC = () => {
                 <p className="text-blue-600 font-bold text-lg">{selectedUser.name}</p>
                 <p className="text-slate-500 text-sm">正在等待感應磁扣...</p>
               </div>
-              <button 
-                onClick={() => setSelectedUser(null)}
-                className="ml-auto text-slate-400 hover:text-slate-600 text-sm font-medium"
-              >
-                重選住戶
-              </button>
+              <div className="ml-auto text-right">
+                <button 
+                  onClick={() => setSelectedUser(null)}
+                  className="text-slate-400 hover:text-slate-600 text-sm font-medium block"
+                >
+                  重選住戶
+                </button>
+                {selectedUser.rfidTag && (
+                   <button 
+                     onClick={async () => {
+                       if (!window.confirm(`確定要解除住戶 ${selectedUser.name} 的磁扣綁定嗎？`)) return;
+                       setIsBinding(true);
+                       try {
+                         const response = await fetch('/api/users/bind-rfid', {
+                           method: 'POST',
+                           headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({
+                             householdId: selectedUser.householdId,
+                             name: selectedUser.name,
+                             rfidTag: ''
+                           })
+                         });
+                         if (response.ok) {
+                           triggerToast('磁扣已解除綁定', 'success');
+                           setSelectedUser(null);
+                           setSearchResults([]);
+                           setSearchTerm('');
+                         } else {
+                           triggerToast('解除失敗', 'error');
+                         }
+                       } catch (e) {
+                         triggerToast('網路失敗', 'error');
+                       } finally {
+                         setIsBinding(false);
+                       }
+                     }}
+                     className="text-red-400 hover:text-red-600 text-[11px] mt-1 font-bold underline transition-colors block ml-auto"
+                   >
+                     解除目前綁定
+                   </button>
+                )}
+              </div>
             </div>
 
             <div className="space-y-4">
