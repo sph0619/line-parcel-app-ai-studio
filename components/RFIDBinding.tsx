@@ -45,24 +45,39 @@ export const RFIDBinding: React.FC = () => {
   const handleBind = async () => {
     if (!selectedUser || !rfidValue.trim()) return;
 
+    const cleanTag = rfidValue.trim();
+
+    // Check if user already has a tag bound
+    if (selectedUser.rfidTag) {
+      const confirmOverwrite = window.confirm(`該住戶已綁定磁扣 (${selectedUser.rfidTag})，確定要更換為新磁扣嗎？`);
+      if (!confirmOverwrite) return;
+    }
+
     setIsBinding(true);
     try {
-      const success = await packageService.bindRFID(
-        selectedUser.householdId,
-        selectedUser.name,
-        rfidValue
-      );
-      if (success) {
+      const response = await fetch('/api/users/bind-rfid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          householdId: selectedUser.householdId,
+          name: selectedUser.name,
+          rfidTag: cleanTag
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
         triggerToast('磁扣綁定成功！', 'success');
         setSelectedUser(null);
         setRfidValue('');
         setSearchResults([]);
         setSearchTerm('');
       } else {
-        triggerToast('綁定失敗，請稍後再試', 'error');
+        triggerToast(data.error || '綁定失敗，請稍後再試', 'error');
       }
     } catch (error) {
-      triggerToast('綁定失敗', 'error');
+      triggerToast('網路連線失敗', 'error');
     } finally {
       setIsBinding(false);
     }
