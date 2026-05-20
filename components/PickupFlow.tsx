@@ -48,6 +48,17 @@ export const PickupFlow: React.FC<Props> = ({ onSuccess }) => {
         }
 
         setAuthMethod(method);
+        
+        if (data.packages.length === 0) {
+            if (method === 'RFID') {
+                triggerToast(`住戶 ${data.user.householdId} (${data.user.name}) 目前無待領包裹！`, 'error');
+            } else {
+                triggerToast('該驗證碼目前無待領包裹！', 'error');
+            }
+            setInputValue('');
+            return;
+        }
+
         setSession(data);
         setSelectedIds(new Set(data.packages.map(p => p.packageId))); // Auto-select all
         setStep('INTERACTION');
