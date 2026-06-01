@@ -58,6 +58,19 @@ export const packageService = {
     if (!response.ok) throw new Error(result.error || '發送失敗');
   },
 
+  verifyRFID: async (rfidTag: string): Promise<PickupSession> => {
+    const response = await fetch(`${API_BASE_URL}/pickup/rfid-verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rfidTag }),
+    });
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || '驗證失敗');
+    }
+    return await response.json();
+  },
+
   verifyPickupOTP: async (otp: string): Promise<PickupSession> => {
     const response = await fetch(`${API_BASE_URL}/pickup/verify`, { 
       method: 'POST', 
@@ -76,11 +89,11 @@ export const packageService = {
     await packageService.confirmBatchPickup([packageId], signature, managerCode);
   },
 
-  confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string): Promise<void> => {
+  confirmBatchPickup: async (packageIds: string[], signature: string, managerCode: string, rfidVerified?: string): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/pickup/confirm`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode }), 
+      body: JSON.stringify({ packageIds, signatureDataURL: signature, managerCode, rfidVerified }), 
     });
     if (!response.ok) throw new Error('提交失敗');
   },
@@ -91,6 +104,25 @@ export const packageService = {
       if (!r.ok) return [];
       return await r.json(); 
     } catch (e) { return []; }
+  },
+  
+  searchUsers: async (query: string): Promise<User[]> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/search?query=${encodeURIComponent(query)}`);
+      if (!response.ok) return [];
+      return await response.json();
+    } catch (e) { return []; }
+  },
+
+  bindRFID: async (householdId: string, name: string, rfidTag: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/bind-rfid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ householdId, name, rfidTag }),
+      });
+      return response.ok;
+    } catch (e) { return false; }
   },
   
   deleteUser: async (lineId: string, householdId: string, name: string): Promise<void> => { 

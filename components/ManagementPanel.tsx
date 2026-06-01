@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { PackageItem, User, PackageType } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, Archive } from 'lucide-react';
+import { Trash2, Search, User as UserIcon, Package as PkgIcon, AlertTriangle, Loader2, Hand, Database, ChevronRight, RefreshCw, ArrowUpDown, ChevronUp, ChevronDown, Archive, CreditCard } from 'lucide-react';
 import { ManualPickupModal } from './ManualPickupModal';
 import { ArchiveSearch } from './ArchiveSearch';
 
@@ -320,6 +320,7 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         </div>
                       </th>
                       <th className="px-6 py-3 font-medium">姓名</th>
+                      <th className="px-6 py-3 font-medium">磁扣驗證</th>
                       <th className="px-6 py-3 font-medium">狀態</th>
                       <th className="px-6 py-3 font-medium text-right">操作</th>
                     </tr>
@@ -333,6 +334,15 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                         <tr key={identifier} className="hover:bg-slate-50">
                           <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
                           <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
+                          <td className="px-6 py-3">
+                             {user.rfidTag ? (
+                               <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-bold flex items-center gap-1 w-fit">
+                                 <CreditCard size={10} /> 已綁定
+                               </span>
+                             ) : (
+                               <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-400 rounded-full font-bold">未綁定</span>
+                             )}
+                          </td>
                           <td className="px-6 py-3">
                              {user.lineId ? (
                                <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">LINE 已綁定</span>

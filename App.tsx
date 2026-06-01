@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings, LogOut, BookOpen } from 'lucide-react';
+import { Package, CheckSquare, LayoutDashboard, History, Bell, Settings, LogOut, BookOpen, CreditCard } from 'lucide-react';
 import { CheckInForm } from './components/CheckInForm';
 import { StatsDashboard } from './components/StatsDashboard';
 import { HistoryLog } from './components/HistoryLog';
 import { PickupFlow } from './components/PickupFlow';
 import { ManagementPanel } from './components/ManagementPanel';
+import { RFIDBinding } from './components/RFIDBinding';
 import { LoginForm } from './components/LoginForm';
 import { UserGuide } from './components/UserGuide';
 import { Toaster } from './components/Toaster';
@@ -82,6 +83,8 @@ export default function App() {
         return <HistoryLog packages={packages} />;
       case 'management':
         return <ManagementPanel packages={packages} onUpdate={refreshData} />;
+      case 'rfid_bind':
+        return <RFIDBinding />;
       case 'guide':
         return <UserGuide />;
       default:
@@ -96,6 +99,7 @@ export default function App() {
       case 'pickup': return '領取作業';
       case 'history': return '歷史紀錄';
       case 'management': return '資料管理';
+      case 'rfid_bind': return '磁扣綁定';
       case 'guide': return '使用手冊';
       default: return '系統總覽';
     }
@@ -151,6 +155,12 @@ export default function App() {
             onClick={() => handleTabChange('history')} 
             icon={<History size={20} />} 
             label="歷史紀錄" 
+          />
+          <NavButton 
+            active={activeTab === 'rfid_bind'} 
+            onClick={() => handleTabChange('rfid_bind')} 
+            icon={<CreditCard size={20} />} 
+            label="磁扣綁定" 
           />
           <NavButton 
             active={activeTab === 'management'} 
