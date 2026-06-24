@@ -397,7 +397,7 @@ app.get('/api/users/search', async (req, res) => {
 
 // NEW: Bind RFID Endpoint
 app.post('/api/users/bind-rfid', async (req, res) => {
-    const { householdId, name, rfidTag } = req.body;
+    const { householdId, name, rfidTag, action } = req.body;
     if (!householdId || !name) return res.status(400).json({ error: "缺少必要參數" });
     
     const cleanTag = (rfidTag || '').trim();
@@ -418,15 +418,33 @@ app.post('/api/users/bind-rfid', async (req, res) => {
         
         if (idx === -1) return res.status(404).json({ error: "找不到住戶" });
 
-        // DUPLICATE CHECK: See if this tag is already bound to ANOTHER user
-        if (cleanTag) {
+        const col = (rows[idx][1] && validateHouseholdId(rows[idx][1])) ? 'F' : 'E';
+        const colIdx = col === 'F' ? 5 : 4;
+        const currentRawVal = rows[idx][colIdx] || '';
+        
+        const getTags = (val) => val.toString().split(',').map(t => t.trim()).filter(Boolean);
+        let currentTags = getTags(currentRawVal);
+
+        let finalValue = '';
+
+        if (action === 'unbind') {
+            if (!cleanTag) {
+                finalValue = '';
+            } else {
+                const updatedTags = currentTags.filter(t => t !== cleanTag);
+                finalValue = updatedTags.join(',');
+            }
+        } else {
+            if (!cleanTag) return res.status(400).json({ error: "磁扣號碼不可為空" });
+
+            // DUPLICATE CHECK: See if this tag is already bound to ANOTHER user
             const duplicateIdx = rows.findIndex((r, i) => {
                 if (i === 0) return false; // Skip header
-                if (i === idx) return false; // Skip the user we are currently updating
+                if (i === idx) return false; // Skip current user
                 
-                // RFID can be in index 4 or 5
-                const tag = (r[5] || r[4] || '').toString().trim();
-                return tag === cleanTag;
+                const otherRaw = r[5] || r[4] || '';
+                const otherTags = getTags(otherRaw);
+                return otherTags.includes(cleanTag);
             });
 
             if (duplicateIdx !== -1) {
@@ -434,20 +452,25 @@ app.post('/api/users/bind-rfid', async (req, res) => {
                 const dupHId = (dupRow[1] && validateHouseholdId(dupRow[1])) ? dupRow[1] : dupRow[0];
                 return res.status(400).json({ error: `此磁扣已由戶號 ${dupHId} 綁定，請先解除該戶綁定或更換磁扣` });
             }
+
+            // Append if not already present
+            if (!currentTags.includes(cleanTag)) {
+                currentTags.push(cleanTag);
+            }
+            finalValue = currentTags.join(',');
         }
         
-        const col = (rows[idx][1] && validateHouseholdId(rows[idx][1])) ? 'F' : 'E';
         await sheets.spreadsheets.values.update({
             spreadsheetId: process.env.GOOGLE_SHEET_ID,
             range: `Users!${col}${idx + 1}`,
             valueInputOption: 'RAW',
-            requestBody: { values: [[cleanTag]] }
+            requestBody: { values: [[finalValue]] }
         });
         
-        res.json({ success: true });
+        res.json({ success: true, updatedTags: finalValue });
     } catch (error) { 
         console.error("Bind RFID error:", error);
-        res.status(500).json({ error: "綁定失敗" }); 
+        res.status(500).json({ error: "作業失敗" }); 
     }
 });
 
@@ -646,7 +669,9 @@ app.post('/api/pickup/rfid-verify', async (req, res) => {
         
         const user = userRows.find(r => {
             const rRFID = (r[1] && validateHouseholdId(r[1])) ? r[5] : r[4];
-            return rRFID && rRFID.toString().trim() === rfidTag.trim();
+            if (!rRFID) return false;
+            const tags = rRFID.toString().split(',').map(t => t.trim()).filter(Boolean);
+            return tags.includes(rfidTag.trim());
         });
         
         if (!user) return res.status(404).json({ error: "查無此磁扣綁定資料" });
