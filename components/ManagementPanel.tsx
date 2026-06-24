@@ -335,13 +335,16 @@ export const ManagementPanel: React.FC<Props> = ({ packages, onUpdate }) => {
                           <td className="px-6 py-3 font-bold text-slate-700">{user.householdId}</td>
                           <td className="px-6 py-3 text-slate-700 font-medium">{user.name || <span className="text-slate-300 italic">未填寫</span>}</td>
                           <td className="px-6 py-3">
-                             {user.rfidTag ? (
-                               <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-bold flex items-center gap-1 w-fit">
-                                 <CreditCard size={10} /> 已綁定
-                               </span>
-                             ) : (
-                               <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-400 rounded-full font-bold">未綁定</span>
-                             )}
+                            {(() => {
+                              const tags = user.rfidTag ? user.rfidTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+                              return tags.length > 0 ? (
+                                <span className="text-[10px] px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-bold flex items-center gap-1 w-fit" title={tags.join(', ')}>
+                                  <CreditCard size={10} /> 已綁定 ({tags.length})
+                                </span>
+                              ) : (
+                                <span className="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-400 rounded-full font-bold">未綁定</span>
+                              );
+                            })()}
                           </td>
                           <td className="px-6 py-3">
                              {user.lineId ? (
