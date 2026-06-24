@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { User } from '../types';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Search, CreditCard, Loader2, UserPlus, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Search, CreditCard, Loader2, UserPlus, CheckCircle2, AlertCircle, X } from 'lucide-react';
 
 export const RFIDBinding: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,10 +47,12 @@ export const RFIDBinding: React.FC = () => {
 
     const cleanTag = rfidValue.trim();
 
-    // Check if user already has a tag bound
-    if (selectedUser.rfidTag) {
-      const confirmOverwrite = window.confirm(`該住戶已綁定磁扣 (${selectedUser.rfidTag})，確定要更換為新磁扣嗎？`);
-      if (!confirmOverwrite) return;
+    // Check if tag is already in currentTags
+    const currentTags = selectedUser.rfidTag ? selectedUser.rfidTag.split(',').map(t => t.trim()).filter(Boolean) : [];
+    if (currentTags.includes(cleanTag)) {
+      triggerToast('此磁扣已在該住戶的綁定名單中！', 'info');
+      setRfidValue('');
+      return;
     }
 
     setIsBinding(true);
@@ -61,7 +63,8 @@ export const RFIDBinding: React.FC = () => {
         body: JSON.stringify({
           householdId: selectedUser.householdId,
           name: selectedUser.name,
-          rfidTag: cleanTag
+          rfidTag: cleanTag,
+          action: 'bind'
         })
       });
 
@@ -69,15 +72,79 @@ export const RFIDBinding: React.FC = () => {
 
       if (response.ok && data.success) {
         triggerToast('磁扣綁定成功！', 'success');
-        setSelectedUser(null);
+        const updatedTags = data.updatedTags || (selectedUser.rfidTag ? `${selectedUser.rfidTag},${cleanTag}` : cleanTag);
+        setSelectedUser({ ...selectedUser, rfidTag: updatedTags });
         setRfidValue('');
-        setSearchResults([]);
-        setSearchTerm('');
       } else {
         triggerToast(data.error || '綁定失敗，請稍後再試', 'error');
       }
     } catch (error) {
       triggerToast('網路連線失敗', 'error');
+    } finally {
+      setIsBinding(false);
+    }
+  };
+
+  const handleUnbindTag = async (tagToUnbind: string) => {
+    if (!selectedUser) return;
+    if (!window.confirm(`確定要解除此磁扣 (${tagToUnbind}) 的綁定嗎？`)) return;
+
+    setIsBinding(true);
+    try {
+      const response = await fetch('/api/users/bind-rfid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          householdId: selectedUser.householdId,
+          name: selectedUser.name,
+          rfidTag: tagToUnbind,
+          action: 'unbind'
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        triggerToast('磁扣已解除綁定', 'success');
+        const updatedTags = data.hasOwnProperty('updatedTags') ? data.updatedTags : '';
+        setSelectedUser({ ...selectedUser, rfidTag: updatedTags });
+      } else {
+        triggerToast(data.error || '解除失敗', 'error');
+      }
+    } catch (e) {
+      triggerToast('網路失敗', 'error');
+    } finally {
+      setIsBinding(false);
+    }
+  };
+
+  const handleUnbindAll = async () => {
+    if (!selectedUser) return;
+    if (!window.confirm(`確定要解除住戶 ${selectedUser.name} 的所有磁扣綁定嗎？`)) return;
+
+    setIsBinding(true);
+    try {
+      const response = await fetch('/api/users/bind-rfid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          householdId: selectedUser.householdId,
+          name: selectedUser.name,
+          rfidTag: '',
+          action: 'unbind'
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        triggerToast('已清除所有磁扣綁定', 'success');
+        setSelectedUser({ ...selectedUser, rfidTag: '' });
+      } else {
+        triggerToast('解除失敗', 'error');
+      }
+    } catch (e) {
+      triggerToast('網路失敗', 'error');
     } finally {
       setIsBinding(false);
     }
@@ -116,7 +183,7 @@ export const RFIDBinding: React.FC = () => {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
               <input
                 type="text"
-                placeholder="輸入姓名或戶號搜尋... (例如: 10A1 或 王小明)"
+                placeholder="輸入姓名 or 戶號搜尋... (例如: 10A1 或 王小明)"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-12 pr-24 py-4 rounded-2xl border-2 border-slate-100 focus:border-blue-500 outline-none transition-all text-lg shadow-sm"
@@ -148,7 +215,9 @@ export const RFIDBinding: React.FC = () => {
                   </div>
                   <div className="flex items-center gap-3">
                     {user.rfidTag && (
-                      <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">已有磁扣</span>
+                      <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded-full font-bold">
+                        已有 {user.rfidTag.split(',').filter(Boolean).length} 個磁扣
+                      </span>
                     )}
                     <UserPlus className="text-slate-300 group-hover:text-blue-500" size={20} />
                   </div>
@@ -158,60 +227,53 @@ export const RFIDBinding: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-8 py-4">
-            <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100 flex items-center gap-6">
-              <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-blue-200">
+            <div className="bg-blue-50/50 p-6 rounded-2xl border border-blue-100 flex flex-col md:flex-row md:items-center gap-6">
+              <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white text-2xl font-bold shadow-lg shadow-blue-200 shrink-0">
                 {selectedUser.householdId}
               </div>
-              <div>
+              <div className="flex-1 space-y-2">
                 <p className="text-blue-600 font-bold text-lg">{selectedUser.name}</p>
-                <p className="text-slate-500 text-sm">正在等待感應磁扣...</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedUser.rfidTag ? (
+                    selectedUser.rfidTag.split(',').map(t => t.trim()).filter(Boolean).map(tag => (
+                      <span key={tag} className="inline-flex items-center gap-1 bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full shadow-sm">
+                        <CreditCard size={10} />
+                        {tag}
+                        <button
+                          type="button"
+                          onClick={() => handleUnbindTag(tag)}
+                          className="hover:bg-blue-200 p-0.5 rounded-full text-blue-900 transition-colors ml-1"
+                          title="解除綁定"
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-slate-400 text-xs italic">尚未綁定任何磁扣</span>
+                  )}
+                </div>
               </div>
-              <div className="ml-auto text-right">
+              <div className="text-right flex flex-col items-end gap-1 shrink-0">
                 <button 
                   onClick={() => setSelectedUser(null)}
-                  className="text-slate-400 hover:text-slate-600 text-sm font-medium block"
+                  className="text-slate-400 hover:text-slate-600 text-sm font-medium"
                 >
                   重選住戶
                 </button>
                 {selectedUser.rfidTag && (
                    <button 
-                     onClick={async () => {
-                       if (!window.confirm(`確定要解除住戶 ${selectedUser.name} 的磁扣綁定嗎？`)) return;
-                       setIsBinding(true);
-                       try {
-                         const response = await fetch('/api/users/bind-rfid', {
-                           method: 'POST',
-                           headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({
-                             householdId: selectedUser.householdId,
-                             name: selectedUser.name,
-                             rfidTag: ''
-                           })
-                         });
-                         if (response.ok) {
-                           triggerToast('磁扣已解除綁定', 'success');
-                           setSelectedUser(null);
-                           setSearchResults([]);
-                           setSearchTerm('');
-                         } else {
-                           triggerToast('解除失敗', 'error');
-                         }
-                       } catch (e) {
-                         triggerToast('網路失敗', 'error');
-                       } finally {
-                         setIsBinding(false);
-                       }
-                     }}
-                     className="text-red-400 hover:text-red-600 text-[11px] mt-1 font-bold underline transition-colors block ml-auto"
+                     onClick={handleUnbindAll}
+                     className="text-red-400 hover:text-red-600 text-[11px] mt-1 font-bold underline transition-colors"
                    >
-                     解除目前綁定
+                     清除所有磁扣
                    </button>
                 )}
               </div>
             </div>
 
             <div className="space-y-4">
-              <label className="block text-sm font-bold text-slate-700 ml-1">感應磁扣號碼 (請感應或手動輸入)</label>
+              <label className="block text-sm font-bold text-slate-700 ml-1">感應新磁扣號碼 (請感應或手動輸入)</label>
               <div className="relative">
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-600" size={24} />
                 <input
@@ -243,7 +305,7 @@ export const RFIDBinding: React.FC = () => {
                 className="flex-[2] py-4 px-6 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all disabled:bg-slate-300 disabled:shadow-none flex items-center justify-center gap-2"
               >
                 {isBinding ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle2 size={20} />}
-                確認綁定磁扣
+                確認綁定新磁扣
               </button>
             </div>
           </div>
@@ -257,9 +319,9 @@ export const RFIDBinding: React.FC = () => {
         </h4>
         <ul className="text-sm text-slate-300 space-y-2 list-disc ml-5">
           <li>先搜尋住戶，點選後系統會進入等待感應狀態。</li>
-          <li>只需將磁扣靠近讀卡機，系統會自動填入序號。</li>
-          <li>如果同一個住戶有多個磁扣，可以重複執行此過程進行更新。</li>
-          <li>此頁面僅針對單一住戶進行操作，不會載入完整住戶清單，節省流量。</li>
+          <li>只需將磁扣靠近讀卡機，系統會自動將新磁扣加入住戶的綁定清單。</li>
+          <li><strong>一戶可綁定多個磁扣</strong>，每個磁扣只能被綁定一次，不會與其他住戶重複。</li>
+          <li>點擊已綁定磁扣右側的 <strong>X</strong> 按鈕，即可針對該磁扣單獨解除綁定。</li>
         </ul>
       </div>
     </div>
