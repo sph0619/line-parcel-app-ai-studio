@@ -125,6 +125,20 @@ function validateHouseholdId(id) {
   return regex.test(str);
 }
 
+function getUserHouseholdAndName(row) {
+  const firstCell = (row[0] || '').toString().trim();
+  const secondCell = (row[1] || '').toString().trim();
+
+  // LINE registrations use Line ID, household ID, name; manually added residents use household ID, name.
+  if (validateHouseholdId(secondCell)) {
+    return { householdId: secondCell.toUpperCase(), name: (row[2] || '').toString().trim() };
+  }
+  if (validateHouseholdId(firstCell)) {
+    return { householdId: firstCell.toUpperCase(), name: secondCell };
+  }
+  return null;
+}
+
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
 async function getAuthClient() {
@@ -589,10 +603,24 @@ app.post('/api/packages', async (req, res) => {
   let { householdId, barcode, recipientName, packageType = 'general', logisticsCompany = '' } = req.body;
   householdId = householdId.trim().toUpperCase();
   barcode = barcode.trim();
+  recipientName = (recipientName || '').toString().trim();
   if (!validateHouseholdId(householdId)) return res.status(400).json({ error: "戶號格式錯誤" });
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // A selected recipient must belong to the submitted household.  This is the final
+    // integrity check in case the browser has a stale resident list or is bypassed.
+    if (recipientName) {
+      const usersResponse = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
+      const isResidentOfHousehold = (usersResponse.data.values || []).some(row => {
+        const user = getUserHouseholdAndName(row);
+        return user && user.householdId === householdId && user.name === recipientName;
+      });
+      if (!isResidentOfHousehold) {
+        return res.status(422).json({ error: '收件人與戶號不相符，請重新確認戶號與住戶後再登錄' });
+      }
+    }
     
     // 只有在新增包裹時才觸發逾期檢查，減少 API 呼叫次數
     checkOverduePackages();
@@ -603,7 +631,7 @@ app.post('/api/packages', async (req, res) => {
     const newPackage = [`PKG${Date.now()}`, barcode, householdId, 'Pending', getTaiwanTimestamp(), '', '', '', 'FALSE', recipientName || '', packageType, logisticsCompany, ''];
     await sheets.spreadsheets.values.append({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Packages!A:A', valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: [newPackage] } });
     await notifyUser(householdId, barcode, recipientName, packageType);
-    res.json({ success: true });
+    res.json({ success: true, package: { barcode, householdId, recipientName } });
   } catch (error) { res.status(500).json({ error: "伺服器錯誤" }); }
 });
 
@@ -719,8 +747,12 @@ app.get('/api/households/:id/residents', async (req, res) => {
     try {
         const auth = await getAuthClient();
         const sheets = google.sheets({ version: 'v4', auth });
-        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!B:C' });
-        const residents = (response.data.values || []).filter(row => row[0] === req.params.id.toUpperCase()).map(row => row[1]);
+        const householdId = req.params.id.toString().trim().toUpperCase();
+        const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
+        const residents = (response.data.values || [])
+          .map(getUserHouseholdAndName)
+          .filter(user => user && user.householdId === householdId && user.name)
+          .map(user => user.name);
         res.json([...new Set(residents)]);
     } catch (error) { res.json([]); }
 });
@@ -883,3 +915,4 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
+
