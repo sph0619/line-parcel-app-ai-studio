@@ -125,6 +125,20 @@ function validateHouseholdId(id) {
   return regex.test(str);
 }
 
+function getUserHouseholdAndName(row) {
+  const firstCell = (row[0] || '').toString().trim();
+  const secondCell = (row[1] || '').toString().trim();
+
+  // LINE registrations use Line ID, household ID, name; manually added residents use household ID, name.
+  if (validateHouseholdId(secondCell)) {
+    return { householdId: secondCell.toUpperCase(), name: (row[2] || '').toString().trim() };
+  }
+  if (validateHouseholdId(firstCell)) {
+    return { householdId: firstCell.toUpperCase(), name: secondCell };
+  }
+  return null;
+}
+
 const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
 
 async function getAuthClient() {
@@ -589,10 +603,23 @@ app.post('/api/packages', async (req, res) => {
   let { householdId, barcode, recipientName, packageType = 'general', logisticsCompany = '' } = req.body;
   householdId = householdId.trim().toUpperCase();
   barcode = barcode.trim();
+  recipientName = (recipientName || '').toString().trim();
   if (!validateHouseholdId(householdId)) return res.status(400).json({ error: "戶號格式錯誤" });
   try {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // A selected recipient must belong to the submitted household before a package is written.
+    if (recipientName) {
+      const usersResponse = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
+      const isResidentOfHousehold = (usersResponse.data.values || []).some(row => {
+        const user = getUserHouseholdAndName(row);
+        return user && user.householdId === householdId && user.name === recipientName;
+      });
+      if (!isResidentOfHousehold) {
+        return res.status(422).json({ error: '收件人與戶號不相符，請重新確認戶號與住戶後再登錄' });
+      }
+    }
     
     // 只有在新增包裹時才觸發逾期檢查，減少 API 呼叫次數
     checkOverduePackages();
