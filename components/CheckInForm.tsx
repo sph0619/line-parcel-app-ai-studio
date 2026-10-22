@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag, Truck } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { PackageType } from '../types';
 
 interface Props {
@@ -23,6 +23,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [householdId, setHouseholdId] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [residentList, setResidentList] = useState<string[]>([]);
+  const [residentListHouseholdId, setResidentListHouseholdId] = useState('');
   const [fetchingResidents, setFetchingResidents] = useState(false);
   
   const [barcode, setBarcode] = useState('');
@@ -33,6 +34,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   const [errorMsg, setErrorMsg] = useState('');
   
   const householdInputRef = useRef<HTMLInputElement>(null);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   const validateHouseholdId = (id: string) => {
     const regex = /^([3-9]|1[0-9])([AC][1-3]|B[1235])$/;
@@ -46,68 +48,33 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
   };
 
   useEffect(() => {
-    let buffer = '';
-    let lastKeyTime = Date.now();
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key.length > 1 && e.key !== 'Enter') return;
-      const currentTime = Date.now();
-      const timeDiff = currentTime - lastKeyTime;
-      lastKeyTime = currentTime;
-      const isFastInput = timeDiff < 35;
-
-      if (e.key === 'Enter') {
-        if (buffer.length > 2) {
-          const finalBarcode = buffer.trim();
-          setBarcode(finalBarcode);
-          triggerToast(`自動填入條碼: ${finalBarcode}`, 'info');
-          buffer = '';
-          e.preventDefault();
-          // FOOLPROOF: After barcode scan, focus on householdId if empty
-          if (!householdId) {
-             householdInputRef.current?.focus();
-          }
-          return;
-        }
-        buffer = '';
-        return;
-      }
-
-      if (isFastInput || buffer.length > 0) {
-        if (isFastInput) {
-          const active = document.activeElement;
-          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-            e.preventDefault();
-          }
-          buffer += e.key;
-        } else {
-          buffer = e.key;
-          setTimeout(() => {
-              if (Date.now() - lastKeyTime > 50 && buffer.length === 1) buffer = '';
-          }, 40);
-        }
-      } else { buffer = ''; }
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown, true);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [householdId]);
-
-  useEffect(() => {
+      let isCurrentRequest = true;
       const fetchResidents = async () => {
           const id = householdId.trim().toUpperCase();
           if (validateHouseholdId(id)) {
               setFetchingResidents(true);
               setRecipientName('');
               setResidentList([]);
+              setResidentListHouseholdId('');
               try {
                   const names = await packageService.getResidents(id);
-                  setResidentList(names);
-              } catch (e) { console.error(e); } finally { setFetchingResidents(false); }
-          } else { setResidentList([]); }
+                  if (isCurrentRequest) {
+                    setResidentList(names);
+                    setResidentListHouseholdId(id);
+                  }
+              } catch (e) { console.error(e); } finally {
+                if (isCurrentRequest) setFetchingResidents(false);
+              }
+          } else {
+            setResidentList([]);
+            setResidentListHouseholdId('');
+          }
       };
       const timeoutId = setTimeout(fetchResidents, 500);
-      return () => clearTimeout(timeoutId);
+      return () => {
+        isCurrentRequest = false;
+        clearTimeout(timeoutId);
+      };
   }, [householdId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -126,12 +93,20 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
         return;
     }
 
+    if (recipientName && residentListHouseholdId !== hId) {
+        triggerToast('住戶資料尚未對應目前戶號，請重新確認後再登錄', 'error');
+        return;
+    }
+
     setLoading(true);
     try {
       await packageService.addPackage(hId, bCode, recipientName, packageType, logisticsCompany);
       triggerToast(`包裹 ${bCode} 已登記成功`, 'success');
       setBarcode(''); 
+      setHouseholdId('');
       setRecipientName(''); 
+      setResidentList([]);
+      setResidentListHouseholdId('');
       setPackageType('general');
       setLogisticsCompany('');
       onPackageAdded();
@@ -213,8 +188,11 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                 <Users className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
                 <select
                     value={recipientName}
-                    onChange={(e) => setRecipientName(e.target.value)}
-                    disabled={residentList.length === 0}
+                    onChange={(e) => {
+                      setRecipientName(e.target.value);
+                      barcodeInputRef.current?.focus();
+                    }}
+                    disabled={fetchingResidents || residentList.length === 0 || residentListHouseholdId !== householdId.trim().toUpperCase()}
                     className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-white disabled:bg-slate-50"
                 >
                     <option value="">-- 通知全體住戶 --</option>
@@ -231,6 +209,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
               <div className="relative flex-1">
                 <Scan className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
                 <input
+                  ref={barcodeInputRef}
                   type="text"
                   value={barcode}
                   onKeyDown={handleKeyDown}
@@ -248,6 +227,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                 <span>相機掃描</span>
               </button>
             </div>
+            <p className="text-xs text-slate-500">使用掃描槍前請先點選此條碼欄位；掃描結果會直接寫入，不再以輸入速度判斷。</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -302,3 +282,4 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     </div>
   );
 };
+
