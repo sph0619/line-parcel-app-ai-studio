@@ -282,4 +282,3 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
     </div>
   );
 };
-
