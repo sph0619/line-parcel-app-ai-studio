@@ -609,7 +609,7 @@ app.post('/api/packages', async (req, res) => {
     const auth = await getAuthClient();
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // A selected recipient must belong to the submitted household.  This is the final
+    // A selected recipient must belong to the submitted household. This is the final
     // integrity check in case the browser has a stale resident list or is bypassed.
     if (recipientName) {
       const usersResponse = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range: 'Users!A:F' });
@@ -915,4 +915,3 @@ async function startServer() {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
-
