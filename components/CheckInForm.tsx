@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Scan, User, Box, ArrowRight, Loader2, X, AlertCircle, Users, Tag, Truck } from 'lucide-react';
 import { packageService } from '../services/packageService';
 import { triggerToast } from './Toaster';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { PackageType } from '../types';
 
 interface Props {
@@ -44,54 +44,6 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
       e.preventDefault();
     }
   };
-
-  useEffect(() => {
-    let buffer = '';
-    let lastKeyTime = Date.now();
-
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key.length > 1 && e.key !== 'Enter') return;
-      const currentTime = Date.now();
-      const timeDiff = currentTime - lastKeyTime;
-      lastKeyTime = currentTime;
-      const isFastInput = timeDiff < 35;
-
-      if (e.key === 'Enter') {
-        if (buffer.length > 2) {
-          const finalBarcode = buffer.trim();
-          setBarcode(finalBarcode);
-          triggerToast(`自動填入條碼: ${finalBarcode}`, 'info');
-          buffer = '';
-          e.preventDefault();
-          // FOOLPROOF: After barcode scan, focus on householdId if empty
-          if (!householdId) {
-             householdInputRef.current?.focus();
-          }
-          return;
-        }
-        buffer = '';
-        return;
-      }
-
-      if (isFastInput || buffer.length > 0) {
-        if (isFastInput) {
-          const active = document.activeElement;
-          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-            e.preventDefault();
-          }
-          buffer += e.key;
-        } else {
-          buffer = e.key;
-          setTimeout(() => {
-              if (Date.now() - lastKeyTime > 50 && buffer.length === 1) buffer = '';
-          }, 40);
-        }
-      } else { buffer = ''; }
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown, true);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [householdId]);
 
   useEffect(() => {
       const fetchResidents = async () => {
@@ -248,6 +200,7 @@ export const CheckInForm: React.FC<Props> = ({ onPackageAdded }) => {
                 <span>相機掃描</span>
               </button>
             </div>
+            <p className="text-xs text-slate-500">使用掃描槍前請先點選此條碼欄位；掃描結果會直接寫入，不再以輸入速度判斷。</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
